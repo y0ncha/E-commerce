@@ -2,32 +2,20 @@
 @host = http://localhost:8080
 @contentType = application/json
 
-### Root / metadata snapshot
-GET {{host}}/api/
+### Root / server metadata
+GET {{host}}/cart-service/
 Accept: application/json
 
 ### Liveness (does not depend on Kafka)
-GET {{host}}/api/health/live
+GET {{host}}/cart-service/health/live
 Accept: application/json
 
 ### Readiness (depends on Kafka)
-GET {{host}}/api/health/ready
-Accept: application/json
-
-### Actuator health (aggregate)
-GET {{host}}/actuator/health
-Accept: application/json
-
-### Actuator liveness
-GET {{host}}/actuator/health/liveness
-Accept: application/json
-
-### Actuator readiness
-GET {{host}}/actuator/health/readiness
+GET {{host}}/cart-service/health/ready
 Accept: application/json
 
 ### Create order
-POST {{host}}/api/create-order
+POST {{host}}/cart-service/create-order
 Content-Type: {{contentType}}
 Accept: application/json
 
@@ -37,7 +25,7 @@ Accept: application/json
 }
 
 ### Update order
-PUT {{host}}/api/update-order
+PUT {{host}}/cart-service/update-order
 Content-Type: {{contentType}}
 Accept: application/json
 

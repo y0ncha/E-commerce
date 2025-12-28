@@ -107,9 +107,16 @@
             </exclusions>
         </dependency>
 
+        <!-- Actuator (optional) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Jackson (needed for ObjectMapper + Kafka JsonSerializer) -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
 
     </dependencies>

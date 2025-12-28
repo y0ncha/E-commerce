@@ -6,9 +6,9 @@ WORKDIR /app
 COPY pom.xml ./
 RUN mvn -q -DskipTests dependency:go-offline
 
-# Copy sources and build the Spring Boot jar
+# Copy sources and build the Spring Boot jar (clean build ensures no cached artifacts)
 COPY src ./src
-RUN mvn -q -DskipTests package
+RUN mvn -q -DskipTests clean package
 
 # ---- Runtime stage ----
 FROM eclipse-temurin:21-jre

@@ -1,0 +1,38 @@
+# Maven build artifacts
+target/
+*.jar
+*.war
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+*.project
+*.classpath
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Maven
+.mvn/
+mvnw.cmd
+
+# Logs
+logs/
+*.log
+
+# Node (if applicable)
+node_modules/
+npm-debug.log
+
+# Build cache
+.m2/
+

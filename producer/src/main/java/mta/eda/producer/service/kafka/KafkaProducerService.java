@@ -44,6 +44,7 @@ public class KafkaProducerService {
      */
     public void sendOrder(String orderId, Order order) {
         try {
+
             SendResult<String, Order> result =
                     kafkaTemplate.send(topicName, orderId, order)
                             .get(sendTimeoutMs, TimeUnit.MILLISECONDS);
@@ -69,7 +70,11 @@ public class KafkaProducerService {
             logger.error("Kafka error sending orderId={}", orderId, cause);
             throw new ProducerSendException("KAFKA_ERROR", orderId,
                     "Kafka send failed: " + cause.getMessage(), cause);
-
+        } catch (org.apache.kafka.common.KafkaException e) {
+            logger.error("Kafka send failed for orderId={}. rootType={}, rootMsg={}",
+                    orderId, e.getClass().getName(), e.getMessage(), e);
+            throw new ProducerSendException("KAFKA_ERROR", orderId,
+                    e.getClass().getSimpleName() + ": " + e.getMessage(), e);
         } catch (Exception e) {
             logger.error("Unexpected error sending orderId={}", orderId, e);
             throw new ProducerSendException("UNEXPECTED", orderId,

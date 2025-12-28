@@ -21,7 +21,7 @@ import java.util.Map;
  * REST API endpoints for order operations.
  */
 @RestController
-@RequestMapping("/api")
+@RequestMapping("/cart-service")
 public class OrderController {
 
     private static final Logger logger = LoggerFactory.getLogger(OrderController.class);
@@ -29,97 +29,138 @@ public class OrderController {
     private final OrderService orderService;
     private final KafkaHealthService kafkaHealthService;
 
-    /**
-     * Constructor for OrderController
-     * @param orderService the order service
-     * @param kafkaHealthService the Kafka health service (readiness checks)
-     */
     public OrderController(OrderService orderService, KafkaHealthService kafkaHealthService) {
         this.orderService = orderService;
         this.kafkaHealthService = kafkaHealthService;
     }
 
     /**
-     * Info endpoint - provides service metadata + readiness/liveness snapshot.
-     * Always returns 200 (use /health/ready for a 200/503 readiness gate).
-     * GET /api
-     * GET /api/
+     * Server metadata endpoint - exposes service info and available endpoints.
+     * GET /cart-service
+     * GET /cart-service/
      */
     @GetMapping({"", "/"})
-    public ResponseEntity<Map<String, Object>> info() {
-        logger.debug("Info endpoint accessed");
-
-        KafkaHealthService.KafkaStatus readiness = kafkaHealthService.readiness();
-        boolean kafkaHealthy = readiness.healthy();
+    public ResponseEntity<Map<String, Object>> root() {
+        logger.debug("Root endpoint accessed");
 
         Map<String, Object> response = new HashMap<>();
         response.put("service", "Producer (Cart Service)");
+        response.put("version", "0.0.1-SNAPSHOT");
         response.put("timestamp", Instant.now().toString());
 
-        response.put("liveness", Map.of(
-                "status", "UP",
-                "message", "Producer service is running"
-        ));
-
-        response.put("readiness", Map.of(
-                "status", kafkaHealthy ? "UP" : "DOWN",
-                "message", kafkaHealthy
-                        ? "Kafka is reachable and topic exists"
-                        : readiness.reason()
-        ));
-
         response.put("endpoints", Map.of(
-                "createOrder", "POST /api/create-order",
-                "updateOrder", "PUT /api/update-order",
-                "liveness", "GET /api/health/live",
-                "readiness", "GET /api/health/ready"
+                "health", Map.of(
+                        "live", Map.of(
+                                "method", "GET",
+                                "path", "/cart-service/health/live",
+                                "checks", "Service process is running (no Kafka dependency)",
+                                "responses", Map.of(
+                                        "200", "Service is alive"
+                                )
+                        ),
+                        "ready", Map.of(
+                                "method", "GET",
+                                "path", "/cart-service/health/ready",
+                                "checks", "Kafka reachable + topic exists",
+                                "responses", Map.of(
+                                        "200", "Kafka is reachable and topic exists",
+                                        "503", "Kafka is unreachable or topic missing"
+                                )
+                        )
+                ),
+                "orders", Map.of(
+                        "createOrder", Map.of(
+                                "method", "POST",
+                                "path", "/cart-service/create-order",
+                                "body", Map.of(
+                                        "orderId", "string (required, non-blank)",
+                                        "numItems", "int (required, 1-100)"
+                                ),
+                                "responses", Map.of(
+                                        "202", "Order created successfully (published to Kafka)",
+                                        "400", "Validation error",
+                                        "409", "Duplicate orderId",
+                                        "500", "Kafka send failed"
+                                )
+                        ),
+                        "updateOrder", Map.of(
+                                "method", "PUT",
+                                "path", "/cart-service/update-order",
+                                "body", Map.of(
+                                        "orderId", "string (required, non-blank)",
+                                        "status", "string (required)"
+                                ),
+                                "responses", Map.of(
+                                        "202", "Order updated successfully (published to Kafka)",
+                                        "400", "Validation error",
+                                        "404", "Order not found",
+                                        "500", "Kafka send failed"
+                                )
+                        )
+                )
         ));
-
-        response.put("status", kafkaHealthy ? "UP" : "DEGRADED");
 
         return ResponseEntity.ok(response);
     }
 
     /**
      * Liveness - app is running (does not depend on Kafka).
-     * GET /api/health/live
+     * GET /cart-service/health/live
      */
     @GetMapping("/health/live")
     public ResponseEntity<Map<String, Object>> live() {
-        return ResponseEntity.ok(Map.of(
-                "service", "Producer (Cart Service)",
-                "status", "UP",
-                "timestamp", Instant.now().toString(),
-                "message", "Service is alive"
+        Map<String, Object> body = new HashMap<>();
+        body.put("service", "Producer (Cart Service)");
+        body.put("check", "liveness");
+        body.put("status", "UP");
+        body.put("timestamp", Instant.now().toString());
+
+        body.put("components", Map.of(
+                "service", Map.of(
+                        "status", "UP",
+                        "message", "Service is alive"
+                )
         ));
+
+        return ResponseEntity.ok(body);
     }
 
     /**
-     * Readiness - app can serve requests that require Kafka.
-     * Returns 200 when ready, 503 when not ready.
-     * GET /api/health/ready
+     * Readiness - checks whether the service can handle requests that depend on Kafka.
+     * Returns 200 when Kafka is reachable and the topic exists, otherwise 503.
+     * GET /cart-service/health/ready
      */
     @GetMapping("/health/ready")
     public ResponseEntity<Map<String, Object>> ready() {
-        KafkaHealthService.KafkaStatus readiness = kafkaHealthService.readiness();
+        KafkaHealthService.KafkaStatus kafka = kafkaHealthService.readiness();
 
-        HttpStatus status = readiness.healthy()
+        HttpStatus httpStatus = kafka.healthy()
                 ? HttpStatus.OK
                 : HttpStatus.SERVICE_UNAVAILABLE;
 
-        return ResponseEntity.status(status).body(Map.of(
-                "service", "Producer (Cart Service)",
-                "status", readiness.healthy() ? "UP" : "DOWN",
-                "timestamp", Instant.now().toString(),
-                "message", readiness.healthy()
-                        ? "Kafka is reachable and topic exists"
-                        : readiness.reason()
+        String overallStatus = kafka.healthy() ? "UP" : "DOWN";
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("service", "Producer (Cart Service)");
+        body.put("check", "readiness");
+        body.put("status", overallStatus);
+        body.put("timestamp", Instant.now().toString());
+
+        body.put("components", Map.of(
+                "kafka", Map.of(
+                        "status", kafka.healthy() ? "UP" : "DOWN",
+                        "message", kafka.healthy()
+                                ? "Kafka is reachable and topic exists"
+                                : kafka.reason()
+                )
         ));
+
+        return ResponseEntity.status(httpStatus).body(body);
     }
 
     /**
      * Create a new order and publish the full order payload to Kafka.
-     * POST /api/create-order
+     * POST /cart-service/create-order
      * Body: { "orderId": "string", "numItems": number }
      */
     @PostMapping("/create-order")
@@ -137,7 +178,7 @@ public class OrderController {
 
     /**
      * Update an existing order status and publish the updated full order payload to Kafka.
-     * PUT /api/update-order
+     * PUT /cart-service/update-order
      * Body: { "orderId": "string", "status": "string" }
      */
     @PutMapping("/update-order")
