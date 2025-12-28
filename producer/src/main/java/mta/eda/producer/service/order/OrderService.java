@@ -1,4 +1,4 @@
-package mta.eda.producer.service;
+package mta.eda.producer.service.order;
 
 import mta.eda.producer.exception.DuplicateOrderException;
 import mta.eda.producer.exception.OrderNotFoundException;
@@ -6,6 +6,7 @@ import mta.eda.producer.model.CreateOrderRequest;
 import mta.eda.producer.model.UpdateOrderRequest;
 import mta.eda.producer.model.Order;
 import mta.eda.producer.model.OrderItem;
+import mta.eda.producer.service.kafka.KafkaProducerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -15,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static mta.eda.producer.service.OrderUtils.*;
+import static mta.eda.producer.service.utils.OrderUtils.*;
 
 /**
  * OrderService

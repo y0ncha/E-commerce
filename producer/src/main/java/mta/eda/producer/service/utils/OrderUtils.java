@@ -1,4 +1,4 @@
-package mta.eda.producer.service;
+package mta.eda.producer.service.utils;
 
 import mta.eda.producer.model.OrderItem;
 

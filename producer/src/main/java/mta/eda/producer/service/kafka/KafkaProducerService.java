@@ -1,0 +1,79 @@
+package mta.eda.producer.service.kafka;
+
+import mta.eda.producer.exception.ProducerSendException;
+import mta.eda.producer.model.Order;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
+import org.springframework.stereotype.Service;
+
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+/**
+ * KafkaProducerService
+ * Publishes Order messages to Kafka.
+ * Uses orderId as the Kafka key to guarantee ordering per order.
+ */
+@Service
+public class KafkaProducerService {
+
+    private static final Logger logger = LoggerFactory.getLogger(KafkaProducerService.class);
+
+    private final KafkaTemplate<String, Order> kafkaTemplate;
+
+    @Value("${kafka.topic.name}")
+    private String topicName;
+
+    @Value("${producer.send.timeout.ms:10000}")
+    private long sendTimeoutMs;
+
+    public KafkaProducerService(KafkaTemplate<String, Order> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate;
+    }
+
+    /**
+     * Sends an Order to Kafka synchronously with bounded timeout.
+     *
+     * @param orderId The order ID (used as Kafka message key for ordering)
+     * @param order   The order to publish
+     * @throws ProducerSendException if send fails (classified by type)
+     */
+    public void sendOrder(String orderId, Order order) {
+        try {
+            SendResult<String, Order> result =
+                    kafkaTemplate.send(topicName, orderId, order)
+                            .get(sendTimeoutMs, TimeUnit.MILLISECONDS);
+
+            logger.info("Successfully sent orderId={} partition={} offset={}",
+                    orderId,
+                    result.getRecordMetadata().partition(),
+                    result.getRecordMetadata().offset());
+
+        } catch (TimeoutException e) {
+            logger.error("Timeout sending orderId={} after {} ms", orderId, sendTimeoutMs, e);
+            throw new ProducerSendException("TIMEOUT", orderId,
+                    "Send timeout after " + sendTimeoutMs + "ms", e);
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.error("Interrupted while sending orderId={}", orderId, e);
+            throw new ProducerSendException("INTERRUPTED", orderId,
+                    "Send interrupted", e);
+
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            logger.error("Kafka error sending orderId={}", orderId, cause);
+            throw new ProducerSendException("KAFKA_ERROR", orderId,
+                    "Kafka send failed: " + cause.getMessage(), cause);
+
+        } catch (Exception e) {
+            logger.error("Unexpected error sending orderId={}", orderId, e);
+            throw new ProducerSendException("UNEXPECTED", orderId,
+                    "Unexpected error: " + e.getMessage(), e);
+        }
+    }
+}

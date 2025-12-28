@@ -13,7 +13,7 @@ import java.util.Map;
 
 /**
  * GlobalExceptionHandler
- * Handles exceptions globally for all controllers.
+ * Handles API errors for all controllers.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -21,7 +21,7 @@ public class GlobalExceptionHandler {
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     /**
-     * Handle validation errors
+     * Handle validation errors (400).
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidationExceptions(MethodArgumentNotValidException ex) {
@@ -30,64 +30,58 @@ public class GlobalExceptionHandler {
                 fieldErrors.put(err.getField(), err.getDefaultMessage())
         );
 
-        logger.warn("Validation error: {}", fieldErrors);
+        logger.warn("Validation failed: {}", fieldErrors);
 
         Map<String, Object> body = new HashMap<>();
-        body.put("error", "Validation failed");
-        body.put("details", fieldErrors);
+        body.put("message", "Validation error");
+        body.put("errors", fieldErrors);
 
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 
     /**
-     * Handle OrderNotFoundException (404)
+     * Handle order not found (404).
      */
     @ExceptionHandler(OrderNotFoundException.class)
-    public ResponseEntity<Map<String, String>> handleOrderNotFoundException(OrderNotFoundException ex) {
+    public ResponseEntity<Map<String, String>> handleOrderNotFound(OrderNotFoundException ex) {
         logger.warn("Order not found: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", ex.getMessage()));
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", ex.getMessage()));
     }
 
     /**
-     * Handle DuplicateOrderException (409 Conflict)
+     * Handle duplicate order (409).
      */
     @ExceptionHandler(DuplicateOrderException.class)
-    public ResponseEntity<Map<String, String>> handleDuplicateOrderException(DuplicateOrderException ex) {
+    public ResponseEntity<Map<String, String>> handleDuplicateOrder(DuplicateOrderException ex) {
         logger.warn("Duplicate order: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", ex.getMessage()));
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", ex.getMessage()));
     }
 
     /**
-     * Handle Kafka exceptions (503 Service Unavailable)
+     * Handle producer send failures (500) with type and orderId.
      */
-    @ExceptionHandler({
-            org.springframework.kafka.KafkaException.class,
-            org.apache.kafka.common.KafkaException.class
-    })
-    public ResponseEntity<Map<String, String>> handleKafkaException(Exception ex) {
-        logger.error("Kafka error: {}", ex.getMessage(), ex);
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .body(Map.of("error", "Kafka is unavailable"));
+    @ExceptionHandler(ProducerSendException.class)
+    public ResponseEntity<Map<String, Object>> handleProducerSendException(ProducerSendException ex) {
+        logger.error("Producer send failed: type={}, orderId={}, message={}",
+                ex.getType(), ex.getOrderId(), ex.getMessage(), ex);
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("error", "Failed to publish message");
+        body.put("type", ex.getType());
+        body.put("orderId", ex.getOrderId());
+
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
 
     /**
-     * Handle all other unhandled exceptions (500 Internal Server Error)
+     * Handle all other unhandled exceptions (500).
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, String>> handleUnhandled(Exception ex) {
         logger.error("Unhandled error: {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", "Internal server error"));
-    }
-
-    /**
-     * Handle Kafka/RuntimeException (503 Service Unavailable)
-     */
-    @ExceptionHandler(RuntimeException.class)
-    public ResponseEntity<Map<String, String>> handleRuntimeException(RuntimeException ex) {
-        Map<String, String> error = new HashMap<>();
-        error.put("error", "Service temporarily unavailable: " + ex.getMessage());
-        logger.error("Runtime error: {}", ex.getMessage(), ex);
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(error);
+                .body(Map.of("message", "Internal server error"));
     }
 }

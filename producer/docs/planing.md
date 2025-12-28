@@ -27,24 +27,33 @@ Business-level details (items, pricing, currencies, etc.) are intentionally simp
 
 ---
 
-## Project Structure
+cd ..## Project Structure (Current Implementation)
 ```text
 producer/
 ├── pom.xml
 ├── src/main/
 │   ├── java/mta/eda/producer/
-│   │   ├── ProducerApplication.java          # Spring Boot entry point
+│   │   ├── Producer.java                      # Spring Boot entry point
 │   │   ├── controller/
 │   │   │   └── OrderController.java           # REST endpoints
 │   │   ├── service/
-│   │   │   ├── OrderService.java              # Business coordination
-│   │   │   └── KafkaProducerService.java      # Kafka publishing
+│   │   │   ├── OrderService.java              # Business logic & coordination
+│   │   │   ├── KafkaProducerService.java      # Kafka publishing layer
+│   │   │   └── OrderUtils.java                # Order generation utilities
 │   │   ├── model/
-│   │   │   ├── OrderEvent.java                # Kafka event payload
-│   │   │   ├── CreateOrderRequest.java        # POST DTO
-│   │   │   └── UpdateOrderRequest.java        # PUT DTO
+│   │   │   ├── Order.java                     # Full order domain model (Kafka payload)
+│   │   │   ├── OrderItem.java                 # Order line item
+│   │   │   ├── CreateOrderRequest.java        # POST /create-order DTO
+│   │   │   └── UpdateOrderRequest.java        # PUT /update-order DTO
+│   │   ├── config/
+│   │   │   ├── KafkaProducerConfig.java       # Kafka producer configuration
+│   │   │   └── KafkaTopicConfig.java          # Topic auto-creation
 │   │   └── exception/
-│   │       └── GlobalExceptionHandler.java    # API error handling
+│   │       ├── GlobalExceptionHandler.java    # Centralized error handling
+│   │       ├── ProducerSendException.java     # Kafka send failure exception
+│   │       ├── DuplicateOrderException.java   # Business rule violation
+│   │       ├── OrderNotFoundException.java    # Business rule violation
+│   │       └── README.md                      # Error handling documentation
 │   └── resources/
 │       └── application.properties             # Kafka + app config
 ├── Dockerfile
@@ -52,82 +61,280 @@ producer/
 ```
 ---
 
-## Data Model (Minimal by Design)
+## Data Model (Actual Implementation)
 
-### OrderEvent (Kafka Message)
+### Order (Kafka Message Payload)
+The producer publishes **full Order objects** to Kafka, not minimal events.
+
 ```json
 {
-  "orderId": "string",
-  "status": "CREATED | UPDATED"
+  "orderId": "ORD-1234",
+  "customerId": "CUST-5678",
+  "orderDate": "2025-12-28T10:30:00Z",
+  "items": [
+    {
+      "itemId": "ITEM-001",
+      "quantity": 2,
+      "price": 29.99
+    }
+  ],
+  "totalAmount": 59.98,
+  "currency": "USD",
+  "status": "new"
 }
 ```
 
-## Sufficiency of the Minimal Structure
+### OrderItem
+```java
+record OrderItem(String itemId, int quantity, double price)
+```
 
-This structure is sufficient to:
-- Demonstrate ordering guarantees
-- Demonstrate broadcast to consumers
-- Validate correct Kafka usage
+### API Request DTOs
+
+**CreateOrderRequest** (POST `/api/create-order`):
+```json
+{
+  "orderId": "ORD-1234",
+  "numItems": 3
+}
+```
+
+**UpdateOrderRequest** (PUT `/api/update-order`):
+```json
+{
+  "orderId": "ORD-1234",
+  "status": "shipped"
+}
+```
+
+## Implementation Notes
+
+### Full Order Publishing
+- The producer generates a **complete Order** object with items, amounts, and metadata
+- This enriched payload is published to Kafka for downstream consumption
+- Items are auto-generated with random IDs, quantities, and prices
+- Customer ID and order date are generated server-side
+
+### In-Memory State
+- Orders are stored in a `ConcurrentHashMap` for update operations
+- This enables demonstrating order lifecycle (create → update)
+- **Note:** This is for demonstration only; production systems would use a persistent store
+
+### Sufficiency
+This structure demonstrates:
+- Kafka ordering guarantees (via `orderId` key)
+- Broadcast to multiple consumer groups
+- Full event payload publishing (realistic for event-driven systems)
+- Proper error handling across the stack
 
 ---
 
 ## Implementation Phases
 
-### Phase 1 – Setup & Configuration
-- Configure Spring Boot with:
-  - `spring-boot-starter-web`
-  - `spring-boot-starter-kafka`
-- Configure Kafka producer properties:
-  - `acks=all`
-  - `retries=3`
-  - `max.in.flight.requests.per.connection=1`
-- Define topic name via configuration (`kafka.topic.name` in `application.properties`)
-- Use JSON serialization
+### Phase 1 – Setup & Configuration ✅ IMPLEMENTED
+- Spring Boot dependencies:
+  - `spring-boot-starter-web` (REST API)
+  - `spring-boot-starter-kafka` (Kafka integration)
+  - `spring-boot-starter-validation` (Bean validation)
+  - `lombok` (reduce boilerplate)
+- Kafka producer configuration (`KafkaProducerConfig`):
+  - `acks=all` (ensure all replicas acknowledge)
+  - `enable.idempotence=true` (prevent duplicates)
+  - `retries=3` (automatic retry on transient failures)
+  - `max.in.flight.requests.per.connection=5` (safe with idempotence)
+  - JSON serialization for Order objects
+- Topic configuration (`KafkaTopicConfig`):
+  - Topic name: `order-events` (configurable via `kafka.topic.name`)
+  - Auto-creation with default partitions and replication
+- Send timeout: Configurable via `producer.send.timeout.ms` (default: 10 seconds)
 
 ---
 
-### Phase 2 – REST API
+### Phase 2 – REST API ✅ IMPLEMENTED
 
 #### Endpoints
 
+- **GET `/api` or `/api/`** (Root/Health)
+  - Purpose: Service information and health status (combined endpoint)
+  - Response: Service name, overall status, component health, available endpoints
+  - Status Codes:
+    - `200 OK` - Service and Kafka are healthy
+    - `503 Service Unavailable` - Kafka is unreachable
+  - Example Response (Healthy):
+    ```json
+    {
+      "service": "Producer (Cart Service)",
+      "status": "UP",
+      "timestamp": "2025-12-28T10:30:00Z",
+      "components": {
+        "service": {
+          "status": "UP",
+          "message": "Producer service is running"
+        },
+        "kafka": {
+          "status": "UP",
+          "message": "Kafka is reachable and topic exists"
+        }
+      },
+      "endpoints": {
+        "createOrder": "POST /api/create-order",
+        "updateOrder": "PUT /api/update-order"
+      }
+    }
+    ```
+  - Example Response (Degraded):
+    ```json
+    {
+      "service": "Producer (Cart Service)",
+      "status": "DEGRADED",
+      "timestamp": "2025-12-28T10:30:00Z",
+      "components": {
+        "service": {
+          "status": "UP",
+          "message": "Producer service is running"
+        },
+        "kafka": {
+          "status": "DOWN",
+          "message": "Kafka is unreachable or topic does not exist"
+        }
+      },
+      "endpoints": {
+        "createOrder": "POST /api/create-order",
+        "updateOrder": "PUT /api/update-order"
+      }
+    }
+    ```
+
 - **POST `/api/create-order`**
   - Input: `{ "orderId": "string", "numItems": number }`
+  - Validation:
+    - `orderId` is required and not blank
+    - `numItems` must be between 1 and 50
   - Behavior:
-    - Validate input
-    - Create `OrderEvent { orderId, status = CREATED }`
-    - Publish to Kafka
-    - Return `202 Accepted` on success
+    - Validates input (Bean Validation)
+    - Generates complete Order with:
+      - Random customer ID
+      - ISO-8601 timestamp
+      - Auto-generated order items (random IDs, quantities, prices)
+      - Calculated total amount
+      - Status = "new"
+    - Stores order in-memory (ConcurrentHashMap)
+    - Publishes full Order to Kafka (key = orderId)
+    - Returns `202 Accepted` on success with Order payload
+  - Error handling:
+    - `400 Bad Request` - Invalid input
+    - `409 Conflict` - Duplicate orderId
+    - `500 Internal Server Error` - Kafka send failure
 
 - **PUT `/api/update-order`**
   - Input: `{ "orderId": "string", "status": "string" }`
+  - Validation:
+    - `orderId` is required and not blank
+    - `status` is required and not blank
   - Behavior:
-    - Validate input
-    - Create `OrderEvent { orderId, status = UPDATED }`
-    - Publish to Kafka
-    - Return `202 Accepted` on success
+    - Validates input (Bean Validation)
+    - Looks up existing order in memory
+    - Creates updated Order with new status
+    - Updates in-memory store
+    - Publishes updated Order to Kafka (key = orderId)
+    - Returns `202 Accepted` on success with Order payload
+  - Error handling:
+    - `400 Bad Request` - Invalid input
+    - `404 Not Found` - Order doesn't exist
+    - `500 Internal Server Error` - Kafka send failure
 
 ---
 
-### Phase 3 – Kafka Publishing
-- Use `KafkaTemplate<String, OrderEvent>`
+### Phase 3 – Kafka Publishing ✅ IMPLEMENTED
+- Use `KafkaTemplate<String, Order>`
 - **CRITICAL:** Use `orderId` as the message key
 - Topic configuration:
   - In `application.properties`: `kafka.topic.name=order-events`
-  - In code (`KafkaProducerService`): `@Value("${kafka.topic.name}") private String topicName;` and `kafkaTemplate.send(topicName, orderId, orderEvent)`
+  - In code (`KafkaProducerService`): `@Value("${kafka.topic.name}") private String topicName;` and `kafkaTemplate.send(topicName, orderId, order)`
+- Synchronous send with timeout:
+  - `.send(topic, key, value).get(timeout, TimeUnit.MILLISECONDS)`
+  - Configurable timeout via `producer.send.timeout.ms` (default: 10 seconds)
+  - Blocks until Kafka acknowledges or timeout/error occurs
 - Rationale:
   - Kafka guarantees ordering per partition
   - Keying by `orderId` ensures all events of the same order go to the same partition
-  - “Broadcast” = multiple consumer groups, each group receives the full stream
+  - "Broadcast" = multiple consumer groups, each group receives the full stream
+  - Synchronous send ensures API returns success only after Kafka ACK
+- Error classification:
+  - `TIMEOUT` - Send exceeded timeout threshold
+  - `INTERRUPTED` - Thread interrupted during send
+  - `KAFKA_ERROR` - Broker/serialization/acknowledgment failure
+  - `UNEXPECTED` - Other errors
 
 ---
 
-### Phase 4 – Error Handling
-- Validation errors → `400 Bad Request`
-- Kafka unavailable / send failure → `500 Internal Server Error`
-- API returns success **only after Kafka ACK**
-- All failures are logged
+### Phase 4 – Error Handling ✅ IMPLEMENTED
 
-No retries or fallbacks at the API layer beyond Kafka’s producer retries.
+#### Exception Handling Strategy
+All exceptions are handled by `GlobalExceptionHandler` with appropriate HTTP status codes:
+
+1. **Validation Errors (400 Bad Request)**
+   - Exception: `MethodArgumentNotValidException`
+   - Triggers: Invalid request body (missing/invalid fields, constraint violations)
+   - Response: Field-level error details
+
+2. **Order Not Found (404 Not Found)**
+   - Exception: `OrderNotFoundException`
+   - Triggers: Attempting to update non-existent order
+   - Response: Error message with orderId
+
+3. **Duplicate Order (409 Conflict)**
+   - Exception: `DuplicateOrderException`
+   - Triggers: Creating order with existing orderId
+   - Response: Error message with orderId
+
+4. **Kafka Send Failures (500 Internal Server Error)**
+   - Exception: `ProducerSendException`
+   - Triggers: Kafka connectivity/timeout/serialization errors
+   - Error types:
+     - `TIMEOUT` - Send operation exceeded timeout threshold
+     - `INTERRUPTED` - Thread was interrupted during send
+     - `KAFKA_ERROR` - Broker connectivity, serialization, or acknowledgment failure
+     - `UNEXPECTED` - Other unexpected errors
+   - Response: Error type, orderId, and message
+   - Additional behavior:
+     - Restores interrupt flag on `InterruptedException`
+     - Logs distinct error types for monitoring
+     - Provides structured error response for clients
+
+5. **Generic Errors (500 Internal Server Error)**
+   - Exception: `Exception` (fallback handler)
+   - Triggers: Any unhandled exception
+   - Response: Generic error message
+
+#### Error Flow
+```
+Client Request
+    ↓
+Controller (@Valid validates input)
+    ↓ (validation fails)
+    ├─→ MethodArgumentNotValidException → 400
+    ↓
+OrderService (business logic)
+    ↓ (duplicate order)
+    ├─→ DuplicateOrderException → 409
+    ↓ (order not found)
+    ├─→ OrderNotFoundException → 404
+    ↓
+KafkaProducerService (publish to Kafka)
+    ↓ (Kafka unavailable/timeout/error)
+    ├─→ ProducerSendException → 500
+    ↓
+Success → 202 Accepted
+```
+
+#### Key Features
+- API returns success **only after Kafka ACK**
+- All failures are logged with appropriate severity
+- Structured error responses for client debugging
+- No retries at API layer (relies on Kafka producer retries)
+- Thread interrupts are properly handled and restored
+- Timeout prevents indefinite blocking
 
 ---
 

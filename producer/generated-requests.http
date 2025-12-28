@@ -1,0 +1,47 @@
+### Environment
+@host = http://localhost:8080
+@contentType = application/json
+
+### Root / metadata snapshot
+GET {{host}}/api/
+Accept: application/json
+
+### Liveness (does not depend on Kafka)
+GET {{host}}/api/health/live
+Accept: application/json
+
+### Readiness (depends on Kafka)
+GET {{host}}/api/health/ready
+Accept: application/json
+
+### Actuator health (aggregate)
+GET {{host}}/actuator/health
+Accept: application/json
+
+### Actuator liveness
+GET {{host}}/actuator/health/liveness
+Accept: application/json
+
+### Actuator readiness
+GET {{host}}/actuator/health/readiness
+Accept: application/json
+
+### Create order
+POST {{host}}/api/create-order
+Content-Type: {{contentType}}
+Accept: application/json
+
+{
+  "orderId": "order-123",
+  "numItems": 2
+}
+
+### Update order
+PUT {{host}}/api/update-order
+Content-Type: {{contentType}}
+Accept: application/json
+
+{
+  "orderId": "order-123",
+  "status": "SHIPPED"
+}

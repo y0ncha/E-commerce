@@ -9,17 +9,12 @@ import org.springframework.kafka.config.TopicBuilder;
 @Configuration
 public class KafkaTopicConfig {
 
-    @Value("${kafka.topic.name}")
-    private String topicName;
-
-    @Value("${kafka.topic.partitions:3}")
-    private int partitions;
-
-    @Value("${kafka.topic.replication-factor:1}")
-    private short replicationFactor;
-
     @Bean
-    public NewTopic orderEventsTopic() {
+    public NewTopic orderEventsTopic(
+            @Value("${kafka.topic.name}") String topicName,
+            @Value("${kafka.topic.partitions:3}") int partitions,
+            @Value("${kafka.topic.replication-factor:1}") short replicationFactor
+    ) {
         return TopicBuilder.name(topicName)
                 .partitions(partitions)
                 .replicas(replicationFactor)
