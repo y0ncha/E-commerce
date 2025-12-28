@@ -8,8 +8,6 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 
-import java.util.concurrent.CompletableFuture;
-
 /**
  * KafkaProducerService
  * Handles publishing Order messages to Kafka.
@@ -37,23 +35,18 @@ public class KafkaProducerService {
      * @throws RuntimeException if send fails
      */
     public void sendOrder(String orderId, Order order) {
-        logger.info("Attempting to send order for orderId={} with status={}", orderId, order.status());
+        try {
+            SendResult<String, Order> result =
+                    kafkaTemplate.send(topicName, orderId, order).get();
 
-        // Send message with orderId as key (CRITICAL for ordering guarantee)
-        CompletableFuture<SendResult<String, Order>> future =
-            kafkaTemplate.send(topicName, orderId, order);
+            logger.info("Successfully sent orderId={} partition={} offset={}",
+                    orderId,
+                    result.getRecordMetadata().partition(),
+                    result.getRecordMetadata().offset());
 
-        // Handle async response
-        future.whenComplete((result, ex) -> {
-            if (ex == null) {
-                logger.info("Successfully sent order for orderId={} to partition={} with offset={}",
-                        orderId,
-                        result.getRecordMetadata().partition(),
-                        result.getRecordMetadata().offset());
-            } else {
-                logger.error("Failed to send order for orderId={}: {}", orderId, ex.getMessage(), ex);
-                throw new RuntimeException("Failed to send message to Kafka: " + ex.getMessage(), ex);
-            }
-        });
+        } catch (Exception e) {
+            logger.error("Failed to send orderId={} to Kafka", orderId, e);
+            throw new RuntimeException("Failed to send message to Kafka", e);
+        }
     }
 }
