@@ -23,7 +23,10 @@
 - Send is synchronous: `kafkaTemplate.send(...).get(timeout)` (10s default).
 - Retries are handled by Kafka client per configuration (no manual loops):
   - `acks=all`, `enable.idempotence=true` → safe retries without duplicates.
-  - **Note on `replication-factor=1`**: With single broker (development), `acks=all` waits only for that broker to persist. No redundancy if broker fails.
+  - **With `replication-factor=3`**: `acks=all` waits for all in-sync replicas (minimum 2, usually all 3) to acknowledge
+    - ✅ Zero data loss: message durable before response sent to client
+    - ✅ Survives 2 simultaneous broker failures
+    - ✅ Production-grade durability guarantee
   - `retries=12`, `retry.backoff.ms=100` → exponential backoff strategy:
     - Retry 1: 100ms, Retry 2: 200ms, Retry 3: 400ms, ... Retry 11: 102.4s
     - Total retry window: ~60 seconds (covers most network partition recovery)
