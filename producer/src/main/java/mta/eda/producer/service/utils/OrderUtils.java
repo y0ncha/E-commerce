@@ -25,7 +25,8 @@ public final class OrderUtils {
     public static List<OrderItem> generateOrderItems(int count) {
         List<OrderItem> items = new ArrayList<>();
         for (int i = 0; i < count; i++) {
-            String itemId = "ITEM-" + String.format("%04d", random.nextInt(10000));
+            // Hex format: 65,536 unique IDs (0000-FFFF) vs 10,000 in decimal
+            String itemId = "ITEM-" + String.format("%04X", random.nextInt(0x10000));
             int quantity = random.nextInt(10) + 1; // 1-10
             double price = roundToTwoDecimals(random.nextDouble() * 100 + 1); // 1.00-101.00
             items.add(new OrderItem(itemId, quantity, price));

@@ -77,7 +77,7 @@ public class OrderController {
                                         "numItems", "int (required, 1-100)"
                                 ),
                                 "responses", Map.of(
-                                        "202", "Order created successfully (published to Kafka)",
+                                        "201", "Order created successfully (published to Kafka)",
                                         "400", "Validation error",
                                         "409", "Duplicate orderId",
                                         "500", "Kafka send failed"
@@ -91,7 +91,7 @@ public class OrderController {
                                         "status", "string (required)"
                                 ),
                                 "responses", Map.of(
-                                        "202", "Order updated successfully (published to Kafka)",
+                                        "200", "Order updated successfully (published to Kafka)",
                                         "400", "Validation error",
                                         "404", "Order not found",
                                         "500", "Kafka send failed"
@@ -170,7 +170,7 @@ public class OrderController {
 
         Order order = orderService.createOrder(request);
 
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
+        return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
                 "message", "Order created successfully",
                 "order", order
         ));
@@ -188,7 +188,7 @@ public class OrderController {
 
         Order order = orderService.updateOrder(request);
 
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
+        return ResponseEntity.ok(Map.of(
                 "message", "Order updated successfully",
                 "order", order
         ));

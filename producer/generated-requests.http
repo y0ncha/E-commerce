@@ -3,33 +3,42 @@
 @contentType = application/json
 
 ### Root / server metadata
+# Expected: 200 OK
 GET {{host}}/cart-service/
 Accept: application/json
 
 ### Liveness (does not depend on Kafka)
+# Expected: 200 OK
 GET {{host}}/cart-service/health/live
 Accept: application/json
 
 ### Readiness (depends on Kafka)
+# Expected: 200 OK (Kafka UP) or 503 SERVICE_UNAVAILABLE (Kafka DOWN)
 GET {{host}}/cart-service/health/ready
 Accept: application/json
 
 ### Create order
+# Expected: 201 CREATED (success), 400 (validation/invalid ID), 409 (duplicate), 500 (Kafka error)
+# Note: orderId must be hexadecimal characters (0-9, A-F), any length
+#   Examples: "1" -> "ORD-0001", "AB" -> "ORD-00AB", "007B" -> "ORD-007B", "ABCD1234" -> "ORD-ABCD1234"
 POST {{host}}/cart-service/create-order
 Content-Type: {{contentType}}
 Accept: application/json
 
 {
-  "orderId": "order-123",
+  "orderId": "1A2B",
   "numItems": 2
 }
 
 ### Update order
+# Expected: 200 OK (success), 400 (validation/invalid ID), 404 (not found), 500 (Kafka error)
+# Note: orderId must be hexadecimal characters (0-9, A-F), any length
+#   Examples: "1" -> "ORD-0001", "AB" -> "ORD-00AB", "007B" -> "ORD-007B", "ABCD1234" -> "ORD-ABCD1234"
 PUT {{host}}/cart-service/update-order
 Content-Type: {{contentType}}
 Accept: application/json
 
 {
-  "orderId": "order-123",
+  "orderId": "1A2B",
   "status": "SHIPPED"
 }

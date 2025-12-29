@@ -1,12 +1,14 @@
 package mta.eda.producer.service.order;
 
 import mta.eda.producer.exception.DuplicateOrderException;
+import mta.eda.producer.exception.InvalidOrderIdException;
 import mta.eda.producer.exception.OrderNotFoundException;
 import mta.eda.producer.model.CreateOrderRequest;
 import mta.eda.producer.model.UpdateOrderRequest;
 import mta.eda.producer.model.Order;
 import mta.eda.producer.model.OrderItem;
 import mta.eda.producer.service.kafka.KafkaProducerService;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -45,8 +47,11 @@ public class OrderService {
         logger.info("Creating order with orderId={}, numItems={}",
                 request.orderId(), request.numItems());
 
-        // Generate customer ID
-        String customerId = "CUST-" + String.format("%04d", random.nextInt(10000));
+        // Normalize orderId to match CUST-#### and ITEM-#### format
+        String normalizedOrderId = normalizeOrderId(request.orderId());
+
+        // Generate customer ID (hex format for 65,536 unique IDs)
+        String customerId = "CUST-" + String.format("%04X", random.nextInt(0x10000));
 
         // Generate order date (ISO-8601 format)
         String orderDate = Instant.now().toString();
@@ -59,7 +64,7 @@ public class OrderService {
 
         // Create full Order
         Order order = new Order(
-                request.orderId(),
+                normalizedOrderId,
                 customerId,
                 orderDate,
                 items,
@@ -69,13 +74,13 @@ public class OrderService {
         );
 
         // Store order in memory
-        Order prev = orderStore.putIfAbsent(request.orderId(), order);
+        Order prev = orderStore.putIfAbsent(normalizedOrderId, order);
         if (prev != null) {
-            throw new DuplicateOrderException(request.orderId());
+            throw new DuplicateOrderException(normalizedOrderId);
         }
 
         // Publish to Kafka
-        kafkaProducerService.sendOrder(request.orderId(), order);
+        kafkaProducerService.sendOrder(normalizedOrderId, order);
         return order;
     }
 
@@ -88,9 +93,12 @@ public class OrderService {
         logger.info("Updating order with orderId={}, status={}",
                 request.orderId(), request.status());
 
+        // Normalize orderId to match CUST-#### and ITEM-#### format
+        String normalizedOrderId = normalizeOrderId(request.orderId());
+
         final Order[] updatedRef = new Order[1];
 
-        orderStore.computeIfPresent(request.orderId(), (id, existingOrder) -> {
+        orderStore.computeIfPresent(normalizedOrderId, (id, existingOrder) -> {
             Order updatedOrder = new Order(
                     existingOrder.orderId(),
                     existingOrder.customerId(),
@@ -105,11 +113,52 @@ public class OrderService {
         });
 
         if (updatedRef[0] == null) {
-            throw new OrderNotFoundException(request.orderId());
+            throw new OrderNotFoundException(normalizedOrderId);
         }
 
-        kafkaProducerService.sendOrder(request.orderId(), updatedRef[0]);
+        kafkaProducerService.sendOrder(normalizedOrderId, updatedRef[0]);
         return updatedRef[0];
     }
-}
 
+    /**
+     * Formats orderId with the ORD- prefix.
+     * Accepts any length of hexadecimal characters from the user (1 or more).
+     * If less than 4 characters, pads with leading zeros. Otherwise keeps as-is.
+     * IMPORTANT: Will NOT generate a random ID. If orderId is null, empty, or contains
+     * invalid characters, throws InvalidOrderIdException immediately.
+     *
+     * @param rawOrderId The raw order ID symbols from the request (e.g., "007B", "1", "ABCD1234")
+     * @return Formatted orderId in format ORD-#### or longer (e.g., ORD-007B, ORD-000A, ORD-ABCD1234)
+     * @throws InvalidOrderIdException if null, empty, or contains non-hex characters
+     */
+    private String normalizeOrderId(String rawOrderId) {
+        // Check for null or empty input
+        if (rawOrderId == null || rawOrderId.isBlank()) {
+            throw new InvalidOrderIdException(rawOrderId == null ? "null" : "empty");
+        }
+
+        // Trim whitespace and convert to uppercase
+        String formatted = formatRawId(rawOrderId);
+        logger.debug("Formatted orderId: '{}' -> '{}'", rawOrderId, formatted);
+        return formatted;
+    }
+
+    private static @NonNull String formatRawId(String rawOrderId) {
+        String symbols = rawOrderId.trim().toUpperCase();
+
+        // Validate: only hex characters (0-9, A-F), at least 1 character
+        if (!symbols.matches("[0-9A-F]+")) {
+            throw new InvalidOrderIdException(rawOrderId);
+        }
+
+        // Pad to at least 4 characters with leading zeros if shorter
+        String padded;
+        if (symbols.length() < 4) {
+            padded = String.format("%4s", symbols).replace(' ', '0');
+        } else {
+            padded = symbols;
+        }
+
+        return "ORD-" + padded;
+    }
+}

@@ -40,6 +40,16 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handle invalid order ID format (400).
+     */
+    @ExceptionHandler(InvalidOrderIdException.class)
+    public ResponseEntity<Map<String, String>> handleInvalidOrderId(InvalidOrderIdException ex) {
+        logger.warn("Invalid orderId format: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    /**
      * Handle order not found (404).
      */
     @ExceptionHandler(OrderNotFoundException.class)
