@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -37,6 +38,42 @@ public class GlobalExceptionHandler {
         body.put("errors", fieldErrors);
 
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    /**
+     * Handle malformed JSON or invalid request body (400).
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, String>> handleMalformedJson(HttpMessageNotReadableException ex) {
+        String errorMsg = ex.getMessage() != null ? ex.getMessage() : "";
+        logger.warn("Malformed JSON or invalid request body: {}", errorMsg);
+
+        String message = "Invalid request body";
+
+        // Try to extract more specific error message
+        if (errorMsg.contains("JSON parse error") || errorMsg.contains("Unexpected character")) {
+            message = "Malformed JSON syntax";
+        } else if (errorMsg.contains("Required request body is missing")) {
+            message = "Request body is required";
+        } else if (errorMsg.contains("Cannot deserialize value of type") && errorMsg.contains("from String")) {
+            // e.g., trying to put string "abc" into Integer field
+            message = "Invalid data type: expected number, got text";
+        } else if (errorMsg.contains("Cannot deserialize")) {
+            message = "Invalid data format in request body";
+        } else if (errorMsg.contains("Unrecognized field")) {
+            // Extract field name if possible
+            int start = errorMsg.indexOf("\"");
+            int end = errorMsg.indexOf("\"", start + 1);
+            if (start != -1 && end != -1) {
+                String fieldName = errorMsg.substring(start + 1, end);
+                message = "Unknown field: '" + fieldName + "'";
+            } else {
+                message = "Request contains unrecognized field";
+            }
+        }
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("message", message));
     }
 
     /**

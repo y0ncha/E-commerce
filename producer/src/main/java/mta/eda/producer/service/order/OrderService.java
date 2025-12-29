@@ -8,7 +8,6 @@ import mta.eda.producer.model.UpdateOrderRequest;
 import mta.eda.producer.model.Order;
 import mta.eda.producer.model.OrderItem;
 import mta.eda.producer.service.kafka.KafkaProducerService;
-import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -124,26 +123,12 @@ public class OrderService {
      * Formats orderId with the ORD- prefix.
      * Accepts any length of hexadecimal characters from the user (1 or more).
      * If less than 4 characters, pads with leading zeros. Otherwise keeps as-is.
-     * IMPORTANT: Will NOT generate a random ID. If orderId is null, empty, or contains
-     * invalid characters, throws InvalidOrderIdException immediately.
      *
      * @param rawOrderId The raw order ID symbols from the request (e.g., "007B", "1", "ABCD1234")
      * @return Formatted orderId in format ORD-#### or longer (e.g., ORD-007B, ORD-000A, ORD-ABCD1234)
-     * @throws InvalidOrderIdException if null, empty, or contains non-hex characters
      */
     private String normalizeOrderId(String rawOrderId) {
-        // Check for null or empty input
-        if (rawOrderId == null || rawOrderId.isBlank()) {
-            throw new InvalidOrderIdException(rawOrderId == null ? "null" : "empty");
-        }
-
         // Trim whitespace and convert to uppercase
-        String formatted = formatRawId(rawOrderId);
-        logger.debug("Formatted orderId: '{}' -> '{}'", rawOrderId, formatted);
-        return formatted;
-    }
-
-    private static @NonNull String formatRawId(String rawOrderId) {
         String symbols = rawOrderId.trim().toUpperCase();
 
         // Validate: only hex characters (0-9, A-F), at least 1 character
@@ -159,6 +144,8 @@ public class OrderService {
             padded = symbols;
         }
 
-        return "ORD-" + padded;
+        String formatted = "ORD-" + padded;
+        logger.debug("Formatted orderId: '{}' -> '{}'", rawOrderId, formatted);
+        return formatted;
     }
 }

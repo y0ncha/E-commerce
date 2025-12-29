@@ -151,18 +151,11 @@ This structure demonstrates:
 
 ### Phase 5 – Testing 🔄 IN PROGRESS (Manual/Integration)
 
-**Status:** Core functionality works; comprehensive test suite planned for Phase 7
-
 #### Current Testing Approach
 - ✅ **Manual Testing:** Using `generated-requests.http` for endpoint testing
   - REST endpoint validation (200, 201, 400, 404, 409, 500 responses)
   - OrderID normalization (hex format validation)
   - Health check endpoints (/live, /ready)
-  
-- ⏳ **Integration Tests:** Planned but deferred to Phase 7
-  - Kafka availability/unavailability scenarios
-  - Message ordering and key-based partitioning
-  - Consumer integration tests
 
 #### Test Files
 - ✅ `generated-requests.http` - HTTP request templates for manual testing
@@ -185,13 +178,53 @@ This structure demonstrates:
 
 #### Immediate Next Steps (High Priority)
 
-1. **Comprehensive Integration Tests**
-   - ✅ Set up test containers (Testcontainers library)
-   - ✅ Write integration tests for all endpoints
-   - ✅ Test Kafka publish/consume flow
-   - ✅ Test error scenarios (Kafka unavailable, timeout, serialization)
-   - ✅ Test OrderID normalization edge cases
-   - ✅ Add test coverage metrics
+1. **JUnit Integration Tests with Testcontainers** (~1 day)
+
+   **Dependencies to add:**
+   ```xml
+   <dependency>
+       <groupId>org.testcontainers</groupId>
+       <artifactId>testcontainers</artifactId>
+       <version>1.19.8</version>
+       <scope>test</scope>
+   </dependency>
+   <dependency>
+       <groupId>org.testcontainers</groupId>
+       <artifactId>kafka</artifactId>
+       <version>1.19.8</version>
+       <scope>test</scope>
+   </dependency>
+   ```
+
+   **Unit Tests to implement:**
+   - `OrderServiceTest` - Test OrderID normalization logic
+     - Test hex validation (valid: "A", "1B", "ABCD"; invalid: "012G", "", null)
+     - Test padding logic ("A" → "ORD-000A", "ABCD1234" → "ORD-ABCD1234")
+     - Test duplicate order detection
+   - `OrderUtilsTest` - Test order generation utilities
+     - Test item generation (quantity, price ranges)
+     - Test total amount calculation
+   - `KafkaHealthServiceTest` - Test health check logic (with mocked AdminClient)
+
+   **Integration Tests to implement:**
+   - `OrderControllerIntegrationTest` - Test all endpoints with real Kafka
+     - Setup: Testcontainers Kafka instance
+     - Test POST /create-order success (201 Created)
+     - Test PUT /update-order success (200 OK)
+     - Test duplicate order (409 Conflict)
+     - Test invalid OrderID format (400 Bad Request)
+     - Test order not found (404 Not Found)
+     - Test validation errors (400 Bad Request - invalid numItems)
+     - Test health endpoints (/health/live → 200, /health/ready → 200/503)
+     - Verify messages actually published to Kafka topic
+     - Verify message key = orderId
+     - Verify ordering per partition
+
+   **Expected outcome:**
+   - 15-20 test cases passing
+   - Messages verified in Kafka
+   - All error scenarios covered
+   - Test coverage > 70%
 
 2. **Consumer Module Implementation**
    - Plan: Mirror the planing.md approach (detailed but scoped)
@@ -216,11 +249,7 @@ This structure demonstrates:
 #### Optional Future Enhancements (Lower Priority)
 
 - **Schema Management:** Avro + Schema Registry for message contracts
-- **Persistence:** Add database (PostgreSQL) for order storage
-- **Caching:** Add Redis for order lookups
-- **Advanced Partitioning:** Partition strategy based on customer region/tier
 - **Exactly-Once Semantics:** Coordinator for distributed transactions
-- **Multi-Region:** Replication across data centers
 - **UI Dashboard:** Admin console for monitoring orders and Kafka
 
 ---

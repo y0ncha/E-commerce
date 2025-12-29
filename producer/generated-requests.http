@@ -31,7 +31,7 @@ Accept: application/json
 }
 
 ### Update order
-# Expected: 200 OK (success), 400 (validation/invalid ID), 404 (not found), 500 (Kafka error)
+# Expected: 200 OK (success), 400 (validation), 404 (not found), 500 (Kafka error)
 # Note: orderId must be hexadecimal characters (0-9, A-F), any length
 #   Examples: "1" -> "ORD-0001", "AB" -> "ORD-00AB", "007B" -> "ORD-007B", "ABCD1234" -> "ORD-ABCD1234"
 PUT {{host}}/cart-service/update-order
@@ -42,3 +42,101 @@ Accept: application/json
   "orderId": "1A2B",
   "status": "SHIPPED"
 }
+
+###############################################
+# ERROR TEST CASES
+###############################################
+
+### Validation Error: Missing numItems field
+# Expected: 400 Bad Request - Validation error: "numItems is required"
+# NOTE: JSON is valid, just missing a required field
+POST {{host}}/cart-service/create-order
+Content-Type: {{contentType}}
+Accept: application/json
+
+{
+  "orderId": "1A2B"
+}
+
+### Validation Error: numItems below minimum (0)
+# Expected: 400 Bad Request - Validation error: "numItems must be at least 1"
+POST {{host}}/cart-service/create-order
+Content-Type: {{contentType}}
+Accept: application/json
+
+{
+  "orderId": "1A2B",
+  "numItems": 0
+}
+
+### Validation Error: numItems above maximum (101)
+# Expected: 400 Bad Request - Validation error: "numItems must not exceed 100"
+POST {{host}}/cart-service/create-order
+Content-Type: {{contentType}}
+Accept: application/json
+
+{
+  "orderId": "1A2B",
+  "numItems": 101
+}
+
+### Validation Error: Missing orderId field
+# Expected: 400 Bad Request - Validation error: "orderId is required"
+POST {{host}}/cart-service/create-order
+Content-Type: {{contentType}}
+Accept: application/json
+
+{
+  "numItems": 2
+}
+
+### Validation Error: Invalid orderId format (non-hex characters)
+# Expected: 400 Bad Request - "Invalid orderId format"
+POST {{host}}/cart-service/create-order
+Content-Type: {{contentType}}
+Accept: application/json
+
+{
+  "orderId": "XYZ",
+  "numItems": 2
+}
+
+### JSON Syntax Error: Missing closing brace
+# Expected: 400 Bad Request - "Malformed JSON syntax"
+POST {{host}}/cart-service/create-order
+Content-Type: {{contentType}}
+Accept: application/json
+
+{
+  "orderId": "1A2B",
+  "numItems": 2
+
+### JSON Syntax Error: Missing quotes around field name
+# Expected: 400 Bad Request - "Malformed JSON syntax"
+POST {{host}}/cart-service/create-order
+Content-Type: {{contentType}}
+Accept: application/json
+
+{
+  orderId: "1A2B",
+  "numItems": 2
+}
+
+### Type Error: Wrong data type (string instead of number)
+# Expected: 400 Bad Request - "Invalid data type: expected number, got text"
+POST {{host}}/cart-service/create-order
+Content-Type: {{contentType}}
+Accept: application/json
+
+{
+  "orderId": "1A2B",
+  "numItems": "not-a-number"
+}
+
+### Empty Request Body
+# Expected: 400 Bad Request - "Request body is required"
+POST {{host}}/cart-service/create-order
+Content-Type: {{contentType}}
+Accept: application/json
+
+

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 
 /**
  * CreateOrderRequest - DTO for POST /api/create-order
@@ -15,8 +16,9 @@ public record CreateOrderRequest(
     @JsonProperty("orderId")
     String orderId,
 
+    @NotNull(message = "numItems is required")
     @Min(value = 1, message = "numItems must be at least 1")
     @Max(value = 100, message = "numItems must not exceed 100")
     @JsonProperty("numItems")
-    int numItems
+    Integer numItems
 ) {}
