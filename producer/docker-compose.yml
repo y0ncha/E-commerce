@@ -9,15 +9,30 @@ services:
     depends_on:
       - zookeeper
     ports:
-      - "9092:9092"
+      - "9092:9092"   # host -> container
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+
+      # 1) Bind: open two ports inside container
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+
+      # 2) Advertise: tell docker clients vs host clients different addresses
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+
+      # 3) Map listener names to protocol
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+
+      # 4) Broker-to-broker communication (even if you have 1 broker)
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # 5) Single broker requirements
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+      # 6) Single-broker transactional metadata (needed if transactions are used)
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
     healthcheck:
       test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
       interval: 5s

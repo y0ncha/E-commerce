@@ -30,6 +30,9 @@ public class KafkaProducerConfig {
     @Value("${spring.kafka.producer.value-serializer}")
     private String valueSerializer;
 
+    @Value("${spring.kafka.producer.properties.linger.ms}")
+    private int lingerMs;
+
     @Value("${spring.kafka.producer.acks}")
     private String acks;
 
@@ -38,9 +41,6 @@ public class KafkaProducerConfig {
 
     @Value("${spring.kafka.producer.properties.retry.backoff.ms}")
     private int retryBackoffMs;
-
-    @Value("${spring.kafka.producer.properties.max.in.flight.requests.per.connection}")
-    private int maxInFlightRequests;
 
     @Value("${spring.kafka.producer.properties.batch.size}")
     private int batchSize;
@@ -54,6 +54,9 @@ public class KafkaProducerConfig {
     @Value("${spring.kafka.producer.properties.delivery.timeout.ms}")
     private int deliveryTimeoutMs;
 
+    @Value("${spring.kafka.producer.client-id:eda-producer}")
+    private String clientId;
+
     /**
      * Creates the ProducerFactory that configures how Kafka producers are created.
      * Key is String (orderId), Value is Order (JSON).
@@ -62,26 +65,23 @@ public class KafkaProducerConfig {
     public ProducerFactory<String, Order> producerFactory() {
         Map<String, Object> configProps = new HashMap<>();
 
-//      Cluster connectivity & serialization
-//      ------------------------------------------------------------
         // Bootstrap servers
         configProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        configProps.put(ProducerConfig.CLIENT_ID_CONFIG, clientId);
+
 
         // Serializers from application.properties
         configProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, keySerializer);
         configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, valueSerializer);
 
-
-//      Durability & reliability
-//      ------------------------------------------------------------
+        // Reliability settings
         configProps.put(ProducerConfig.ACKS_CONFIG, acks);
         configProps.put(ProducerConfig.RETRIES_CONFIG, retries);
         configProps.put(ProducerConfig.RETRY_BACKOFF_MS_CONFIG, retryBackoffMs);
 
-//      Ordering & performance
-//      ------------------------------------------------------------
-        configProps.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, maxInFlightRequests);
+        // Performance tuning
         configProps.put(ProducerConfig.BATCH_SIZE_CONFIG, batchSize);
+        configProps.put(ProducerConfig.LINGER_MS_CONFIG, lingerMs);
         configProps.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, compressionType);
 
         // Timeouts
