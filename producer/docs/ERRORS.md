@@ -23,10 +23,14 @@
 - Send is synchronous: `kafkaTemplate.send(...).get(timeout)` (10s default).
 - Retries are handled by Kafka client per configuration (no manual loops):
   - `acks=all`, `enable.idempotence=true` → safe retries without duplicates.
-  - `retries=3`, `retry.backoff.ms=100` → transient failure recovery.
-  - `max.in.flight.requests.per.connection=1` → preserves ordering with retries.
-  - `request.timeout.ms=5000`, `delivery.timeout.ms=120000` → bound wait time; timeouts surface as errors.
+  - **Note on `replication-factor=1`**: With single broker (development), `acks=all` waits only for that broker to persist. No redundancy if broker fails.
+  - `retries=12`, `retry.backoff.ms=100` → exponential backoff strategy:
+    - Retry 1: 100ms, Retry 2: 200ms, Retry 3: 400ms, ... Retry 11: 102.4s
+    - Total retry window: ~60 seconds (covers most network partition recovery)
+  - `max.in.flight.requests.per.connection=5` (auto-limited with idempotence) → preserves ordering with retries.
+  - `request.timeout.ms=5000`, `delivery.timeout.ms=120000` → bounds retry window; timeouts fail the send.
 - On exhausted retries/timeout, a 500 is returned with `ProducerSendException` details.
+- **Exponential backoff prevents thundering herd** - doesn't hammer broker immediately on recovery.
 
 ## Health Endpoints
 - **Liveness** (`GET /cart-service/health/live`): checks service only; always 200 with service status.
@@ -38,4 +42,6 @@
 - 404 Not Found: `{ "message": "Order ORD-123 not found" }`
 - 409 Conflict: `{ "message": "Order ORD-123 already exists" }`
 - 500 Kafka Error: `{ "error": "Failed to publish message", "type": "TIMEOUT", "orderId": "ORD-123" }`
+
+
 
