@@ -15,6 +15,9 @@
 - `retries=3`
 - `retry.backoff.ms=100`
 - `max.in.flight.requests.per.connection=1` (preserve ordering with retries)
+- `batch.size=16384`
+- `linger.ms=0` (send immediately, no batching delay)
+- `compression.type=snappy`
 - `key` = `orderId` (partitioned by order; guarantees per-order ordering)
 - `value` = JSON Order payload (JsonSerializer)
 
