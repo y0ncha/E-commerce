@@ -87,6 +87,16 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handle validation errors for Order objects (400).
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException ex) {
+        logger.warn("Illegal argument: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    /**
      * Handle order not found (404).
      */
     @ExceptionHandler(OrderNotFoundException.class)

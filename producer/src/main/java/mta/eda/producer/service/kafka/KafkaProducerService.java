@@ -1,5 +1,7 @@
 package mta.eda.producer.service.kafka;
 
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
 import mta.eda.producer.exception.ProducerSendException;
 import mta.eda.producer.model.Order;
 import org.slf4j.Logger;
@@ -9,9 +11,11 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 
 /**
  * KafkaProducerService
@@ -24,6 +28,7 @@ public class KafkaProducerService {
     private static final Logger logger = LoggerFactory.getLogger(KafkaProducerService.class);
 
     private final KafkaTemplate<String, Order> kafkaTemplate;
+    private final Validator validator;
 
     @Value("${kafka.topic.name}")
     private String topicName;
@@ -31,8 +36,9 @@ public class KafkaProducerService {
     @Value("${producer.send.timeout.ms:10000}")
     private long sendTimeoutMs;
 
-    public KafkaProducerService(KafkaTemplate<String, Order> kafkaTemplate) {
+    public KafkaProducerService(KafkaTemplate<String, Order> kafkaTemplate, Validator validator) {
         this.kafkaTemplate = kafkaTemplate;
+        this.validator = validator;
     }
 
     /**
@@ -41,8 +47,19 @@ public class KafkaProducerService {
      * @param orderId The order ID (used as Kafka message key for ordering)
      * @param order   The order to publish
      * @throws ProducerSendException if send fails (classified by type)
+     * @throws IllegalArgumentException if order validation fails
      */
     public void sendOrder(String orderId, Order order) {
+        // Validate order before sending to Kafka
+        Set<ConstraintViolation<Order>> violations = validator.validate(order);
+        if (!violations.isEmpty()) {
+            String errors = violations.stream()
+                    .map(v -> v.getPropertyPath() + ": " + v.getMessage())
+                    .collect(Collectors.joining(", "));
+            logger.error("Order validation failed for orderId={}: {}", orderId, errors);
+            throw new IllegalArgumentException("Order validation failed: " + errors);
+        }
+
         try {
 
             SendResult<String, Order> result =
