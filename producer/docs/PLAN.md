@@ -227,21 +227,7 @@ This structure demonstrates:
    - All error scenarios covered
    - Test coverage > 70%
 
-2. **Consumer Module Implementation**
-   - Plan: Mirror the planing.md approach (detailed but scoped)
-   - Consume from `order-events` topic
-   - Process events per order (respecting key-based ordering)
-   - Store processed events or trigger business logic
-   - Health checks (consumer lag monitoring)
-   - Error handling for malformed messages
-
-3. **Monitoring & Observability**
-   - ✅ Add Prometheus metrics (Kafka produce latency, success/failure counts)
-   - ✅ Add distributed tracing (Spring Cloud Sleuth)
-   - ✅ Add health check for consumer lag
-   - ✅ Add detailed logging for troubleshooting
-
-4. **Documentation**
+2. **Documentation**
    - ✅ Update README.md with setup/run instructions
    - ✅ Add API documentation (Swagger/OpenAPI)
    - ✅ Add architecture diagram (producer-kafka-consumer flow)
