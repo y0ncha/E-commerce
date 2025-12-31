@@ -1,6 +1,5 @@
 # Maven build artifacts
 target/
-*.jar
 *.war
 
 # IDE files
@@ -20,6 +19,7 @@ Thumbs.db
 # Git
 .git/
 .gitignore
+.gitattributes
 
 # Maven
 .mvn/
@@ -36,3 +36,13 @@ npm-debug.log
 # Build cache
 .m2/
 
+# Documentation fils
+docs/
+*.pdf
+*.md
+
+# Scripts
+scripts/
+
+# Tests
+*.http

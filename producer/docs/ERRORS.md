@@ -1,50 +1,121 @@
-# Error Handling
+# Error Handling Strategy
 
-## Global Exception Handling
-- Centralized in `GlobalExceptionHandler`.
-- Returns JSON with clear messages and appropriate HTTP status codes.
+The Producer (Cart Service) implements a layered error handling strategy across the **API Layer**, **Service Layer**, and **Infrastructure Layer** to ensure reliability and data integrity.
 
-### Validation Errors (400)
-- **MethodArgumentNotValidException**: Bean validation failures (missing/invalid fields).
-- **InvalidOrderIdException**: orderId not hex or blank.
-- **HttpMessageNotReadableException**: malformed JSON, missing body, wrong types, unknown fields.
+---
 
-### Business Errors
-- **OrderNotFoundException** (404): Order does not exist (update).
-- **DuplicateOrderException** (409): Order already exists (create).
+## 1. Infrastructure & Kafka Errors (The "Active" Layer)
 
-### Kafka Errors (500)
-- **ProducerSendException**: Send failed after retries/timeouts; includes type (TIMEOUT, INTERRUPTED, KAFKA_ERROR, UNEXPECTED) and orderId.
+These errors involve connection to the broker and message delivery. The system handles them through a multi-stage recovery process.
 
-### Fallback Errors (500)
-- Any unhandled exception → 500 Internal Server Error with generic message.
+### Level 1: Native Kafka Retries (Transient Errors)
+- **Action**: The producer is configured to automatically attempt to resend messages **12 times** (`retries=12`).
+- **Backoff**: Uses an **exponential backoff** starting at 100ms (`retry.backoff.ms=100`), preventing a "thundering herd" effect on a recovering broker.
+- **Safety**: With `enable.idempotence=true`, Kafka ensures that even if a resend occurs due to a lost acknowledgment, no duplicate orders are created on the broker.
+- **Goal**: Handle temporary network glitches without bothering the user or losing order sequence.
 
-## Kafka Send Path and Retries
-- Send is synchronous: `kafkaTemplate.send(...).get(timeout)` (10s default).
-- Retries are handled by Kafka client per configuration (no manual loops):
-  - `acks=all`, `enable.idempotence=true` → safe retries without duplicates.
-  - **With `replication-factor=3`**: `acks=all` waits for all in-sync replicas (minimum 2, usually all 3) to acknowledge
-    - ✅ Zero data loss: message durable before response sent to client
-    - ✅ Survives 2 simultaneous broker failures
-    - ✅ Production-grade durability guarantee
-  - `retries=12`, `retry.backoff.ms=100` → exponential backoff strategy:
-    - Retry 1: 100ms, Retry 2: 200ms, Retry 3: 400ms, ... Retry 11: 102.4s
-    - Total retry window: ~60 seconds (covers most network partition recovery)
-  - `max.in.flight.requests.per.connection=5` (auto-limited with idempotence) → preserves ordering with retries.
-  - `request.timeout.ms=5000`, `delivery.timeout.ms=120000` → bounds retry window; timeouts fail the send.
-- On exhausted retries/timeout, a 500 is returned with `ProducerSendException` details.
-- **Exponential backoff prevents thundering herd** - doesn't hammer broker immediately on recovery.
+### Level 2: Synchronous Timeout Handling (Broker Outage)
+- **Action**: While Kafka retries for up to 120 seconds (`delivery.timeout.ms`), the `KafkaProducerService` limits the API's wait time to **10 seconds** via `.get(sendTimeoutMs, ...)`.
+- **Reasoning**: This prevents HTTP requests from hanging indefinitely. If the broker doesn't recover within 10 seconds, the service throws a `ProducerSendException`.
+- **API Response**: The `GlobalExceptionHandler` converts this into a **500 Internal Server Error** response, providing the user with a clear error message.
 
-## Health Endpoints
-- **Liveness** (`GET /cart-service/health/live`): checks service only; always 200 with service status.
-- **Readiness** (`GET /cart-service/health/ready`): checks service + Kafka; 200 if Kafka UP, else 503. Response includes per-check status/details.
+### Level 3: Data Safety (Manual Recovery Fallback)
+- **Action**: If the send operation fails (after retries or timeout), the system logs the **full order details** to a dedicated `failed-orders.log` file.
+- **Implementation**: A dedicated logger (`FAILED_ORDERS_LOGGER`) captures the order payload and failure reason.
+- **Goal**: Ensure no customer data is lost. This allows an administrator to re-process the orders once the Kafka cluster is restored.
+
+---
+
+## 2. Resiliency & Consistency Patterns
+
+To ensure the Producer remains a "source of truth," we implement advanced patterns in the `OrderService`.
+
+### Local Store Consistency (Save-with-Rollback)
+- **Responsiveness**: We use a 10s synchronous API timeout to ensure the application remains responsive even during broker outages.
+- **Rollback Logic**: If Kafka fails after all native retries and the 10s timeout, we revert the in-memory `orderStore`:
+    - **Create**: The failed order is **removed** from the store.
+    - **Update**: The **previous version** of the order is restored.
+- **Consistency Guarantee**: This ensures the local state doesn't "lie" to the user. If the client receives a 500 error, they can safely retry the request knowing the system state has been reverted to its pre-failure condition.
+
+### Internal Dead Letter Storage (DLQ)
+- **Corrective Action**: Failed messages are added to an in-memory `failedKafkaMessages` list.
+- **Data Preservation**: This follows the "Saving for Later Processing" approach to ensure no order data is lost even if the infrastructure is down.
+- **Note**: In a production environment, this internal list would be replaced by a persistent external database or file to survive application restarts.
+
+---
+
+## 3. Business Logic Errors
+
+Handled at the service level before any message is sent to Kafka.
+
+- **Order Existence Check**:
+    - **Errors**: `OrderNotFoundException` (during update) or `DuplicateOrderException` (during creation).
+    - **Handling**: Caught by `GlobalExceptionHandler`, returning **404 Not Found** or **409 Conflict**.
+- **Recovery**: No resending occurs here as these are logical errors; the client must correct the request data.
+
+---
+
+## 4. Validation & Syntax Errors
+
+Represent malformed data from the client.
+
+- **Action**: Handled by Spring Bean Validation and the `GlobalExceptionHandler`.
+- **Response**: Returns **400 Bad Request** with field-level details (e.g., "numItems is required").
+- **Recovery**: The system rejects the request immediately to prevent "poison pill" messages from entering the Kafka stream.
+
+---
+
+## 5. System Health & Proactivity
+
+The system includes proactive monitoring to prevent failures before they occur.
+
+- **Readiness Probes**: The `/health/ready` endpoint actively checks connectivity to Kafka and topic existence.
+- **Action**: If the broker is down, the probe returns **503 Service Unavailable**. This allows external load balancers (or Kubernetes) to stop sending traffic to this instance before an actual order fails.
+- **Liveness Probes**: The `/health/live` endpoint checks the service's internal state, ensuring the JVM is healthy.
+
+---
+
+## 6. Future Enhancements (Planned)
+
+To move beyond returning errors and improve automated recovery, the following patterns are planned:
+
+1. **Circuit Breaker Pattern**:
+    - Use **Resilience4j** to "open" a circuit after 5 consecutive Kafka timeouts.
+    - This will immediately reject new requests for a short period, allowing the broker time to recover without being hit by 10-second timeout logic on every request.
+
+2. **External Local Persistence (Fallback)**:
+    - In the `catch` block of `KafkaProducerService`, save failed orders to a local fallback store (e.g., a local file or H2 database).
+    - A background task will periodically attempt to "re-produce" these failed orders once the broker is back online.
+
+3. **Client-Side Retry Header**:
+    - Include a `Retry-After` header in **503 Service Unavailable** responses to inform clients exactly how long to wait before retrying.
+
+---
 
 ## Error Response Examples
-- 400 Validation: `{ "message": "Validation error", "errors": { "numItems": "numItems is required" } }`
-- 400 Malformed JSON: `{ "message": "Malformed JSON syntax" }`
-- 404 Not Found: `{ "message": "Order ORD-123 not found" }`
-- 409 Conflict: `{ "message": "Order ORD-123 already exists" }`
-- 500 Kafka Error: `{ "error": "Failed to publish message", "type": "TIMEOUT", "orderId": "ORD-123" }`
 
+### 400 Validation
+```json
+{
+  "message": "Validation error",
+  "errors": {
+    "numItems": "numItems is required"
+  }
+}
+```
 
+### 409 Conflict
+```json
+{
+  "message": "Order ORD-000A already exists"
+}
+```
 
+### 500 Kafka Timeout
+```json
+{
+  "error": "Failed to publish message",
+  "type": "TIMEOUT",
+  "orderId": "ORD-000A"
+}
+```

@@ -22,6 +22,9 @@ import java.util.concurrent.TimeoutException;
 public class KafkaProducerService {
 
     private static final Logger logger = LoggerFactory.getLogger(KafkaProducerService.class);
+    
+    // Dedicated logger for Level 3 Data Safety (logs to failed-orders.log)
+    private static final Logger failedOrdersLogger = LoggerFactory.getLogger("FAILED_ORDERS_LOGGER");
 
     private final KafkaTemplate<String, Order> kafkaTemplate;
 
@@ -55,30 +58,41 @@ public class KafkaProducerService {
                     result.getRecordMetadata().offset());
 
         } catch (TimeoutException e) {
-            logger.error("Timeout sending orderId={} after {} ms", orderId, sendTimeoutMs, e);
+            logFailedOrder("TIMEOUT", orderId, order, e.getMessage());
             throw new ProducerSendException("TIMEOUT", orderId,
                     "Send timeout after " + sendTimeoutMs + "ms", e);
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            logger.error("Interrupted while sending orderId={}", orderId, e);
+            logFailedOrder("INTERRUPTED", orderId, order, e.getMessage());
             throw new ProducerSendException("INTERRUPTED", orderId,
                     "Send interrupted", e);
 
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
-            logger.error("Kafka error sending orderId={}", orderId, cause);
+            logFailedOrder("KAFKA_ERROR", orderId, order, cause.getMessage());
             throw new ProducerSendException("KAFKA_ERROR", orderId,
                     "Kafka send failed: " + cause.getMessage(), cause);
         } catch (org.apache.kafka.common.KafkaException e) {
-            logger.error("Kafka send failed for orderId={}. rootType={}, rootMsg={}",
-                    orderId, e.getClass().getName(), e.getMessage(), e);
+            logFailedOrder("KAFKA_ERROR", orderId, order, e.getMessage());
             throw new ProducerSendException("KAFKA_ERROR", orderId,
                     e.getClass().getSimpleName() + ": " + e.getMessage(), e);
         } catch (Exception e) {
-            logger.error("Unexpected error sending orderId={}", orderId, e);
+            logFailedOrder("UNEXPECTED", orderId, order, e.getMessage());
             throw new ProducerSendException("UNEXPECTED", orderId,
                     "Unexpected error: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Level 3 Data Safety: Logs the full order details to a dedicated file for manual recovery.
+     */
+    private void logFailedOrder(String type, String orderId, Order order, String reason) {
+        logger.error("Level 3 Fallback: Logging failed orderId={} to failed-orders.log [Type: {}, Reason: {}]", 
+                orderId, type, reason);
+        
+        // Log the full order object for manual re-processing
+        failedOrdersLogger.info("FAILED_ORDER | Type: {} | OrderId: {} | Reason: {} | Payload: {}", 
+                type, orderId, reason, order);
     }
 }

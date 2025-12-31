@@ -107,9 +107,10 @@ This structure demonstrates:
 
 **What we did:**
 - Set up Spring Boot with Kafka, Web, and Validation dependencies
-- Configured Kafka producer for durability and ordering (`acks=all`, `enable.idempotence=true`, `max.in.flight.requests.per.connection=1`)
-- Configured topic `order-events` with 3 partitions
-- Set up admin client to not fail on Kafka unavailability (`fail-fast=false`)
+- Configured Kafka producer for durability and ordering (`acks=all`, `enable.idempotence=true`)
+- Configured topic `order-events` with 3 partitions and **replication factor 1** (single broker setup)
+- Refined performance settings: `linger.ms=5` for throughput batching
+- Configured admin client to not fail on Kafka unavailability (`fail-fast=false`)
 - Configured logging to suppress Kafka bootstrap spam (Kafka packages set to WARN level)
 
 ---

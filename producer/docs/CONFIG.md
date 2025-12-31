@@ -89,9 +89,9 @@ Complete reference for all configuration properties in the Producer (Cart Servic
 - `spring.kafka.producer.properties.batch.size=16384` (16 KB)
   - **Purpose:** Max size of batched messages before sending
   - **Trade-off:** Higher = better throughput, lower = lower latency
-- `spring.kafka.producer.properties.linger.ms=0`
-  - **Purpose:** Artificial delay to accumulate batches (0 = send immediately)
-  - **Trade-off:** Higher values improve throughput, 0 minimizes latency
+- `spring.kafka.producer.properties.linger.ms=5`
+  - **Purpose:** Artificial delay to accumulate batches (5ms for high-volume throughput)
+  - **Trade-off:** Higher values improve throughput by batching, 0 minimizes latency
 - `spring.kafka.producer.properties.compression.type=snappy`
   - **Purpose:** Compress messages before sending
   - **Options:** none, gzip, snappy, lz4, zstd
@@ -103,7 +103,7 @@ Complete reference for all configuration properties in the Producer (Cart Servic
 - `spring.kafka.producer.properties.delivery.timeout.ms=120000` (120s)
   - **Purpose:** Upper bound for entire send operation (including retries)
   - **Formula:** Must be > `request.timeout.ms * (retries + 1) + linger.ms`
-  - **Validation:** `120000 > 5000 * 4 + 0 = 20000` ✅
+  - **Validation:** `120000 > 5000 * 4 + 5 = 20005` ✅
 - `spring.kafka.producer.properties.max.block.ms=5000` (5s)
   - **Purpose:** Max time to block waiting for metadata/buffer space
 - `producer.send.timeout.ms=10000` (10s, custom property)
@@ -119,17 +119,10 @@ Complete reference for all configuration properties in the Producer (Cart Servic
 - `kafka.topic.partitions=3`
   - **Purpose:** Number of partitions for parallel processing
   - **Recommendation:** >= number of consumer instances for parallelism
-- `kafka.topic.replication-factor=3`
-  - **Purpose:** Number of replicas per partition (high availability)
-  - **Current Setup:** 3 (production-grade fault tolerance)
-  - **Benefits:**
-    - ✅ Tolerates 2 broker failures simultaneously
-    - ✅ Zero data loss with `acks=all` (all in-sync replicas must acknowledge)
-    - ✅ Leader election ensures availability
-  - **Trade-off:**
-    - ❌ Higher disk usage (3x storage)
-    - ❌ Slightly higher latency (wait for 3 replicas)
-  - **With `acks=all` + `replication-factor=3`:** True durability - data survives broker failures
+- `kafka.topic.replication-factor=1`
+  - **Purpose:** Number of replicas per partition
+  - **Current Setup:** 1 (Single broker development environment)
+  - **Note:** In production, this should be set to 3 for high availability.
 
 ---
 
@@ -243,9 +236,7 @@ KAFKA_BOOTSTRAP_SERVERS=kafka:9092
 | **Durability** | `acks=all`, `enable.idempotence=true` |
 | **Ordering** | Idempotence enabled, key-based partitioning |
 | **Retries** | `retries=12`, exponential backoff (100ms → 25.6s) |
-| **Latency** | `linger.ms=0` (send immediately) |
+| **Latency** | `linger.ms=5` (batch for throughput) |
 | **Throughput** | `batch.size=16384`, `compression.type=snappy` |
 | **Timeouts** | `request=5s`, `delivery=120s`, `send=10s` |
 | **Health** | Cache 2s, timeout 1s |
-
-
