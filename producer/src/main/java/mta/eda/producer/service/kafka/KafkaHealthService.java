@@ -3,6 +3,10 @@ package mta.eda.producer.service.kafka;
 import mta.eda.producer.model.HealthCheck;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.DescribeTopicsResult;
+import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.common.TopicPartitionInfo;
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,6 +14,7 @@ import org.springframework.boot.kafka.autoconfigure.KafkaProperties;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -105,15 +110,56 @@ public class KafkaHealthService {
         props.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, (int) healthTimeoutMs);
 
         try (AdminClient admin = AdminClient.create(props)) {
-            admin.describeCluster().nodes().get(healthTimeoutMs, TimeUnit.MILLISECONDS);
-            admin.describeTopics(List.of(topicName))
-                    .allTopicNames()
+
+            // 1) Verify broker is reachable
+            var brokers = admin.describeCluster()
+                    .nodes()
                     .get(healthTimeoutMs, TimeUnit.MILLISECONDS);
 
-            return new KafkaStatus(true, "OK");
+            if (brokers.isEmpty()) {
+                return new KafkaStatus(false, "BROKER_DOWN: no brokers available");
+            }
+
+            // 2) Verify topic exists
+            try {
+                DescribeTopicsResult dtr = admin.describeTopics(List.of(topicName));
+                TopicDescription topicDesc = dtr.topicNameValues()
+                        .get(topicName)
+                        .get(healthTimeoutMs, TimeUnit.MILLISECONDS);
+
+                // 3) Verify topic has at least one partition with a leader
+                for (TopicPartitionInfo p : topicDesc.partitions()) {
+                    if (p.leader() == null) {
+                        return new KafkaStatus(false, "NO_LEADER: topic=" + topicName + ", partition=" + p.partition());
+                    }
+                }
+
+                return new KafkaStatus(true, "OK");
+
+            } catch (ExecutionException ee) {
+                Throwable cause = ee.getCause();
+                if (cause instanceof UnknownTopicOrPartitionException) {
+                    return new KafkaStatus(false, "TOPIC_NOT_FOUND: " + topicName);
+                } else if (cause instanceof org.apache.kafka.common.errors.TimeoutException) {
+                    return new KafkaStatus(false, "TIMEOUT: " + cause.getMessage());
+                } else if (cause != null) {
+                    return new KafkaStatus(false, cause.getClass().getSimpleName() + ": " + cause.getMessage());
+                }
+                return new KafkaStatus(false, "EXECUTION_ERROR: " + ee.getMessage());
+            }
+
+        } catch (java.util.concurrent.TimeoutException te) {
+            return new KafkaStatus(false, "ADMIN_TIMEOUT: " + te.getMessage());
+        } catch (ExecutionException ee) {
+            Throwable cause = ee.getCause();
+            if (cause instanceof org.apache.kafka.common.errors.TimeoutException) {
+                return new KafkaStatus(false, "TIMEOUT: " + cause.getMessage());
+            } else if (cause != null) {
+                return new KafkaStatus(false, cause.getClass().getSimpleName() + ": " + cause.getMessage());
+            }
+            return new KafkaStatus(false, "EXECUTION_ERROR: " + ee.getMessage());
         } catch (Exception e) {
             return new KafkaStatus(false, e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 }
-

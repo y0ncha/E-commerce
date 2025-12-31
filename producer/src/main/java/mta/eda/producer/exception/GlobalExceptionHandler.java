@@ -9,12 +9,15 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import jakarta.servlet.http.HttpServletRequest;
+import java.time.Instant;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * GlobalExceptionHandler
- * Handles API errors for all controllers.
+ * Handles API errors for all controllers using a consistent envelope.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -22,21 +25,33 @@ public class GlobalExceptionHandler {
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     /**
+     * Unified error body builder.
+     */
+    private Map<String, Object> errorBody(HttpServletRequest request, String error, String message, Map<String, Object> details) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("timestamp", Instant.now().toString());
+        body.put("error", error);
+        body.put("message", message);
+        body.put("path", request != null ? request.getRequestURI() : "");
+        if (details != null && !details.isEmpty()) {
+            body.put("details", details);
+        }
+        return body;
+    }
+
+    /**
      * Handle validation errors (400).
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<Map<String, Object>> handleValidationExceptions(MethodArgumentNotValidException ex) {
-        Map<String, String> fieldErrors = new HashMap<>();
-        ex.getBindingResult().getFieldErrors().forEach(err ->
-                fieldErrors.put(err.getField(), err.getDefaultMessage())
-        );
+    public ResponseEntity<Map<String, Object>> handleValidationExceptions(MethodArgumentNotValidException ex, HttpServletRequest request) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+        ex.getBindingResult().getFieldErrors().forEach(err -> fieldErrors.put(err.getField(), err.getDefaultMessage()));
 
         logger.warn("Validation failed: {}", fieldErrors);
 
-        Map<String, Object> body = new HashMap<>();
-        body.put("message", "Validation error");
-        body.put("errors", fieldErrors);
-
+        Map<String, Object> details = new HashMap<>();
+        details.put("fieldErrors", fieldErrors);
+        Map<String, Object> body = errorBody(request, "Bad Request", "Validation error", details);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 
@@ -44,81 +59,73 @@ public class GlobalExceptionHandler {
      * Handle malformed JSON or invalid request body (400).
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<Map<String, String>> handleMalformedJson(HttpMessageNotReadableException ex) {
-        String errorMsg = ex.getMessage() != null ? ex.getMessage() : "";
-        logger.warn("Malformed JSON or invalid request body: {}", errorMsg);
-
+    public ResponseEntity<Map<String, Object>> handleMalformedJson(HttpMessageNotReadableException ex, HttpServletRequest request) {
+        String raw = ex.getMessage() != null ? ex.getMessage() : "";
         String message = "Invalid request body";
-
-        // Try to extract more specific error message
-        if (errorMsg.contains("JSON parse error") || errorMsg.contains("Unexpected character")) {
+        if (raw.contains("JSON parse error") || raw.contains("Unexpected character")) {
             message = "Malformed JSON syntax";
-        } else if (errorMsg.contains("Required request body is missing")) {
+        } else if (raw.contains("Required request body is missing")) {
             message = "Request body is required";
-        } else if (errorMsg.contains("Cannot deserialize value of type") && errorMsg.contains("from String")) {
-            // e.g., trying to put string "abc" into Integer field
+        } else if (raw.contains("Cannot deserialize value of type") && raw.contains("from String")) {
             message = "Invalid data type: expected number, got text";
-        } else if (errorMsg.contains("Cannot deserialize")) {
-            message = "Invalid data format in request body";
-        } else if (errorMsg.contains("Unrecognized field")) {
-            // Extract field name if possible
-            int start = errorMsg.indexOf("\"");
-            int end = errorMsg.indexOf("\"", start + 1);
-            if (start != -1 && end != -1) {
-                String fieldName = errorMsg.substring(start + 1, end);
-                message = "Unknown field: '" + fieldName + "'";
-            } else {
-                message = "Request contains unrecognized field";
-            }
+        } else if (raw.contains("Unrecognized field")) {
+            message = "Request contains unrecognized field";
         }
-
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(Map.of("message", message));
+        Map<String, Object> details = new HashMap<>();
+        details.put("cause", raw);
+        Map<String, Object> body = errorBody(request, "Bad Request", message, details);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 
     /**
      * Handle invalid order ID format (400).
      */
     @ExceptionHandler(InvalidOrderIdException.class)
-    public ResponseEntity<Map<String, String>> handleInvalidOrderId(InvalidOrderIdException ex) {
+    public ResponseEntity<Map<String, Object>> handleInvalidOrderId(InvalidOrderIdException ex, HttpServletRequest request) {
         logger.warn("Invalid orderId format: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(Map.of("message", ex.getMessage()));
+        Map<String, Object> body = errorBody(request, "Bad Request", ex.getMessage(), null);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 
     /**
      * Handle order not found (404).
      */
     @ExceptionHandler(OrderNotFoundException.class)
-    public ResponseEntity<Map<String, String>> handleOrderNotFound(OrderNotFoundException ex) {
+    public ResponseEntity<Map<String, Object>> handleOrderNotFound(OrderNotFoundException ex, HttpServletRequest request) {
         logger.warn("Order not found: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(Map.of("message", ex.getMessage()));
+        Map<String, Object> body = errorBody(request, "Not Found", ex.getMessage(), null);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
     }
 
     /**
      * Handle duplicate order (409).
      */
     @ExceptionHandler(DuplicateOrderException.class)
-    public ResponseEntity<Map<String, String>> handleDuplicateOrder(DuplicateOrderException ex) {
+    public ResponseEntity<Map<String, Object>> handleDuplicateOrder(DuplicateOrderException ex, HttpServletRequest request) {
         logger.warn("Duplicate order: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Map.of("message", ex.getMessage()));
+        Map<String, Object> details = new HashMap<>();
+        String msg = ex.getMessage();
+        if (msg != null) {
+            int idx = msg.indexOf(": ");
+            if (idx != -1 && idx + 2 < msg.length()) {
+                String orderId = msg.substring(idx + 2).trim();
+                details.put("orderId", orderId);
+            }
+        }
+        Map<String, Object> body = errorBody(request, "Conflict", msg != null ? msg : "Order already exists", details);
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     /**
-     * Handle producer send failures (500) with type and orderId.
+     * Handle producer send failures (500).
      */
     @ExceptionHandler(ProducerSendException.class)
-    public ResponseEntity<Map<String, Object>> handleProducerSendException(ProducerSendException ex) {
-        logger.error("Producer send failed: type={}, orderId={}, message={}",
-                ex.getType(), ex.getOrderId(), ex.getMessage(), ex);
-
-        Map<String, Object> body = new HashMap<>();
-        body.put("error", "Failed to publish message");
-        body.put("type", ex.getType());
-        body.put("orderId", ex.getOrderId());
-
+    public ResponseEntity<Map<String, Object>> handleProducerSendException(ProducerSendException ex, HttpServletRequest request) {
+        logger.error("Producer send failed: type={}, orderId={}, message={}", ex.getType(), ex.getOrderId(), ex.getMessage());
+        Map<String, Object> details = new HashMap<>();
+        details.put("type", ex.getType());
+        details.put("orderId", ex.getOrderId());
+        Map<String, Object> body = errorBody(request, "Internal Server Error", "Failed to publish message", details);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
 
@@ -126,9 +133,11 @@ public class GlobalExceptionHandler {
      * Handle all other unhandled exceptions (500).
      */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, String>> handleUnhandled(Exception ex) {
+    public ResponseEntity<Map<String, Object>> handleUnhandled(Exception ex, HttpServletRequest request) {
         logger.error("Unhandled error: {}", ex.getMessage(), ex);
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("message", "Internal server error"));
+        Map<String, Object> details = new HashMap<>();
+        details.put("cause", ex.getClass().getSimpleName());
+        Map<String, Object> body = errorBody(request, "Internal Server Error", "Internal server error", details);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
 }

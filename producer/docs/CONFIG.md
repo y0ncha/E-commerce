@@ -119,14 +119,17 @@ Complete reference for all configuration properties in the Producer (Cart Servic
 - `kafka.topic.partitions=3`
   - **Purpose:** Number of partitions for parallel processing
   - **Recommendation:** >= number of consumer instances for parallelism
-- `kafka.topic.replication-factor=1`
-  - **Purpose:** Number of replicas per partition
-  - **Current Setup:** 1 (development mode, single broker)
-  - **Trade-off:** 
-    - ✅ Simpler, faster, lower overhead
-    - ❌ No fault tolerance (broker down = data lost)
-  - **Production:** Should be >= 3 for high availability
-  - **Note:** With `acks=all` and `replication-factor=1`, acks means "only this broker" - no redundancy
+- `kafka.topic.replication-factor=3`
+  - **Purpose:** Number of replicas per partition (high availability)
+  - **Current Setup:** 3 (production-grade fault tolerance)
+  - **Benefits:**
+    - ✅ Tolerates 2 broker failures simultaneously
+    - ✅ Zero data loss with `acks=all` (all in-sync replicas must acknowledge)
+    - ✅ Leader election ensures availability
+  - **Trade-off:**
+    - ❌ Higher disk usage (3x storage)
+    - ❌ Slightly higher latency (wait for 3 replicas)
+  - **With `acks=all` + `replication-factor=3`:** True durability - data survives broker failures
 
 ---
 
