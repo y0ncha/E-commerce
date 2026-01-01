@@ -18,6 +18,7 @@ The configuration is split across three components:
 
 - [Configuration Files](#configuration-files)
 - [Critical Configuration Decisions](#critical-configuration-decisions)
+- [Health Monitoring & Actuator](#health-monitoring--actuator)
 - [Configuration Reference Table](#configuration-reference-table)
 - [Why These Choices Matter](#why-these-choices-matter)
 - [Testing the Configuration](#testing-the-configuration)
@@ -85,6 +86,15 @@ application.properties → @Value injection → ProducerFactory → KafkaTemplat
 
 ---
 
+## Health Monitoring & Actuator
+
+### Manual Health Check Strategy
+- **Choice:** Disable default Kafka health indicator (`management.health.kafka.enabled=false`).
+- **Why:** The default Spring Boot health indicator for Kafka can be slow and may not provide the specific connectivity details required for the assignment. Instead, we use a custom `KafkaHealthService` that utilizes the `AdminClient` for precise connectivity and topic existence checks.
+- **Exposure:** Actuator endpoints are configured to show full details and include readiness/liveness probes.
+
+---
+
 ## Configuration Reference Table
 
 | Property | Value | Why | Criticality |
@@ -102,6 +112,7 @@ application.properties → @Value injection → ProducerFactory → KafkaTemplat
 | `topic.name` | `order-events` | Topic for all order events | Required |
 | `topic.partitions` | `3` | Parallel processing | Configurable |
 | `topic.replication-factor` | `1` | Single broker setup | Environment-specific |
+| **`management.health.kafka.enabled`** | **`false`** | **Use custom KafkaHealthService** | **Important** |
 
 ---
 

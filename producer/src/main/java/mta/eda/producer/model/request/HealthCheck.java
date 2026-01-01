@@ -1,4 +1,4 @@
-package mta.eda.producer.model;
+package mta.eda.producer.model.request;
 
 /**
  * HealthCheck - Individual health check result.

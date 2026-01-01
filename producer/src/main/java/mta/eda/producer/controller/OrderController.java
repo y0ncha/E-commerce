@@ -1,11 +1,11 @@
 package mta.eda.producer.controller;
 
 import jakarta.validation.Valid;
-import mta.eda.producer.model.CreateOrderRequest;
-import mta.eda.producer.model.HealthCheck;
-import mta.eda.producer.model.HealthResponse;
-import mta.eda.producer.model.Order;
-import mta.eda.producer.model.UpdateOrderRequest;
+import mta.eda.producer.model.request.CreateOrderRequest;
+import mta.eda.producer.model.request.HealthCheck;
+import mta.eda.producer.model.request.HealthResponse;
+import mta.eda.producer.model.order.Order;
+import mta.eda.producer.model.request.UpdateOrderRequest;
 import mta.eda.producer.service.kafka.KafkaHealthService;
 import mta.eda.producer.service.order.OrderService;
 import org.slf4j.Logger;

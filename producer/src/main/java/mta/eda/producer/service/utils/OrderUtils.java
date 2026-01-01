@@ -1,6 +1,6 @@
 package mta.eda.producer.service.utils;
 
-import mta.eda.producer.model.OrderItem;
+import mta.eda.producer.model.order.OrderItem;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

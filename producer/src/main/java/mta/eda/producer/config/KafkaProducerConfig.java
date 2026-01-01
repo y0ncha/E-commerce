@@ -1,6 +1,6 @@
 package mta.eda.producer.config;
 
-import mta.eda.producer.model.Order;
+import mta.eda.producer.model.order.Order;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;

@@ -1,6 +1,6 @@
 package mta.eda.producer.service.utils;
 
-import mta.eda.producer.model.OrderItem;
+import mta.eda.producer.model.order.OrderItem;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;

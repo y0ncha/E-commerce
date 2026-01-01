@@ -1,6 +1,6 @@
 package mta.eda.producer.service.kafka;
 
-import mta.eda.producer.model.HealthCheck;
+import mta.eda.producer.model.request.HealthCheck;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
