@@ -1,6 +1,6 @@
 # ---- Build stage ----
 # Uses a heavy Maven image only for compilation to keep the final image small
-FROM maven:3.9.9-eclipse-temurin-21 AS build
+FROM maven:3.9.12-eclipse-temurin-21 AS build
 WORKDIR /app
 
 # Better caching: dependencies layer changes only when pom changes
