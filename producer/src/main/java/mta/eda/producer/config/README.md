@@ -117,10 +117,10 @@ application.properties → @Value injection → ProducerFactory → KafkaTemplat
 ## Testing the Configuration
 
 ### 1. Verify Response Accuracy
-Stop Kafka and send a request. Verify the API returns a 503 after exactly 10 seconds. Start Kafka and verify the message **did not** appear in the topic (since the timeout was reached).
+Stop Kafka and send a request. Verify the API returns a **500 Internal Server Error** after exactly 10 seconds. Start Kafka and verify the message **did not** appear in the topic (since the 8s delivery timeout was reached before the 10s API limit).
 
 ### 2. Verify Circuit Breaker
-Send 10 failing requests. Verify that subsequent requests return a 503 **instantly** (milliseconds) instead of waiting 10 seconds.
+Send 10 failing requests. Verify that subsequent requests return a **503 Service Unavailable** instantly (milliseconds) instead of waiting 10 seconds.
 
 ---
 

@@ -13,12 +13,13 @@ These errors involve connection to the broker and message delivery. The system h
 - **Time Limit**: Kafka will attempt to deliver the message for **8 seconds** (`delivery.timeout.ms=8000`).
 - **Per-Attempt Timeout**: Each individual request attempt times out after **3 seconds** (`request.timeout.ms=3000`), allowing for ~2-3 retry attempts within the 8s window.
 - **Goal**: Ensure that if a user receives a failure response (after the 10s API timeout), the Kafka client has **already stopped** trying to send the message. This prevents "Ghost Successes" where an order lands in Kafka after the user was told it failed.
+- **API Response**: Returns **500 Internal Server Error**. Architectural Reasoning: A failed send during an active request is an unexpected server condition.
 
 ### Level 2: Circuit Breaker (Fail-Fast Mechanism)
 - **Action**: Protected by **Resilience4j**, the system monitors the failure rate of Kafka calls.
 - **Tripping the Circuit**: If **50% of calls fail** within a sliding window of 10 attempts, the circuit opens for **30 seconds**.
 - **Behavior**: When the circuit is **OPEN**, the system immediately rejects new Kafka calls without attempting them, protecting application threads from exhaustion.
-- **API Response**: The `GlobalExceptionHandler` returns a **503 Service Unavailable** status, informing the client that the service is temporarily unable to handle requests.
+- **API Response**: Returns **503 Service Unavailable**. Architectural Reasoning: 503 indicates a temporary state where the service is protecting itself.
 
 ### Level 3: Data Safety (Manual Recovery Fallback)
 - **Action**: If the timeout is reached OR the Circuit Breaker is open, the system logs the **full order details** to a dedicated `failed-orders.log` file.
@@ -36,7 +37,7 @@ To ensure the Producer remains a "source of truth," we implement advanced patter
 - **Rollback Logic**: If Kafka fails after the timeout or due to an open circuit, we revert the in-memory `orderStore`:
     - **Create**: The failed order is **removed** from the store.
     - **Update**: The **previous version** of the order is restored.
-- **Consistency Guarantee**: This ensures the local state doesn't "lie" to the user. If the client receives a 503 error, they can safely retry the request knowing the system state has been reverted to its pre-failure condition.
+- **Consistency Guarantee**: This ensures the local state doesn't "lie" to the user. If the client receives a 500 or 503 error, they can safely retry the request knowing the system state has been reverted to its pre-failure condition.
 
 ### Internal Dead Letter Storage (DLQ)
 - **Corrective Action**: Failed messages are added to an in-memory `failedMessages` map (keyed by `orderId`).
@@ -93,16 +94,29 @@ The system includes proactive monitoring to prevent failures before they occur.
 }
 ```
 
-### 503 Service Unavailable (Circuit Breaker Open or Kafka Timeout)
+### 500 Internal Server Error (Kafka Timeout/Down)
+```json
+{
+  "timestamp": "2026-01-01T12:00:00.000Z",
+  "error": "Internal Server Error",
+  "message": "The server encountered an error while publishing the order event.",
+  "path": "/cart-service/create-order",
+  "details": {
+    "type": "KAFKA_DOWN",
+    "orderId": "ORD-000A"
+  }
+}
+```
+
+### 503 Service Unavailable (Circuit Breaker Open)
 ```json
 {
   "timestamp": "2026-01-01T12:00:00.000Z",
   "error": "Service Unavailable",
-  "message": "The service is temporarily unable to process your request. Please try again later.",
+  "message": "The service is temporarily unavailable due to high failure rates. Please try again later.",
   "path": "/cart-service/create-order",
   "details": {
-    "type": "KAFKA_UNAVAILABLE",
-    "orderId": "ORD-000A"
+    "type": "CIRCUIT_BREAKER_OPEN"
   }
 }
 ```
