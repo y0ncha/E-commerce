@@ -1,5 +1,7 @@
 package mta.eda.producer.service.kafka;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import mta.eda.producer.exception.ProducerSendException;
 import mta.eda.producer.model.Order;
 import org.slf4j.Logger;
@@ -40,11 +42,13 @@ public class KafkaProducerService {
 
     /**
      * Sends an Order to Kafka synchronously with bounded timeout.
+     * Protected by a Circuit Breaker to prevent thread exhaustion during broker outages.
      *
      * @param orderId The order ID (used as Kafka message key for ordering)
      * @param order   The order to publish
      * @throws ProducerSendException if send fails (classified by type)
      */
+    @CircuitBreaker(name = "kafkaProducer", fallbackMethod = "sendOrderFallback")
     public void sendOrder(String orderId, Order order) {
         try {
 
@@ -82,6 +86,22 @@ public class KafkaProducerService {
             throw new ProducerSendException("UNEXPECTED", orderId,
                     "Unexpected error: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Fallback method for Circuit Breaker.
+     * Called when the circuit is OPEN (CallNotPermittedException).
+     * Note: This method is called via reflection by Resilience4j.
+     */
+    @SuppressWarnings("unused")
+    public void sendOrderFallback(String orderId, Order order, CallNotPermittedException e) {
+        logger.error("Circuit Breaker is OPEN for kafkaProducer. Rejecting send for orderId={}", orderId);
+        
+        // Still log to failed-orders.log for data safety
+        logFailedOrder("CIRCUIT_BREAKER_OPEN", orderId, order, "Circuit breaker is open");
+        
+        throw new ProducerSendException("CIRCUIT_BREAKER_OPEN", orderId,
+                "Kafka service is temporarily unavailable (Circuit Breaker Open)", e);
     }
 
     /**

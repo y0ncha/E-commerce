@@ -150,21 +150,7 @@ This structure demonstrates:
 
 ---
 
-### Phase 5 – Testing 🔄 IN PROGRESS (Manual/Integration)
-
-#### Current Testing Approach
-- ✅ **Manual Testing:** Using `generated-requests.http` for endpoint testing
-  - REST endpoint validation (200, 201, 400, 404, 409, 500 responses)
-  - OrderID normalization (hex format validation)
-  - Health check endpoints (/live, /ready)
-
-#### Test Files
-- ✅ `generated-requests.http` - HTTP request templates for manual testing
-- ⏳ `ProducerApplicationTests.java` - Unit/integration tests (pending Phase 7)
-
----
-
-### Phase 6 – Docker & Deployment ✅ COMPLETED
+### Phase 5 – Docker & Deployment ✅ COMPLETED
 
 **What we did:**
 - Created multi-stage Dockerfile with Maven build and OpenJDK 21 runtime
@@ -175,69 +161,53 @@ This structure demonstrates:
 
 ---
 
+### Phase 6 – Advanced Resiliency 🔄 IN PROGRESS
+
+#### TODO 1: Implement a Circuit Breaker (Fail-Fast Mechanism) ✅ COMPLETED
+The goal is to stop attempting to call Kafka once a failure threshold is reached, protecting the system from thread exhaustion.
+
+- [x] **Update pom.xml**: Added `resilience4j-spring-boot3` and `spring-boot-starter-aop`.
+- [x] **Configure Circuit Breaker in application.properties**: Defined failure rate (50%), sliding window (10), and wait duration (30s).
+- [x] **Annotate KafkaProducerService.sendOrder**: Added `@CircuitBreaker` to `sendOrder`.
+- [x] **Implement Fallback Logic**: Created `sendOrderFallback` to handle `CallNotPermittedException`, log to DLQ, and throw `CIRCUIT_BREAKER_OPEN`.
+- [x] **Update GlobalExceptionHandler**: Added handler for `CIRCUIT_BREAKER_OPEN` to return **503 Service Unavailable**.
+
+#### TODO 2: Increase delivery.timeout.ms (Background Buffering) 📋 PLANNED
+The goal is to allow Kafka's background thread to continue retrying during "network blips" while your API returns a fast response if the individual request exceeds its timeout.
+
+- [ ] **Update application.properties**: Increase `spring.kafka.producer.properties.delivery.timeout.ms` to a higher value, such as `120000` (2 minutes), to survive longer disconnections.
+- [ ] **Configure Indefinite Retries**: Set `spring.kafka.producer.retries` to `2147483647` (Integer.MAX_VALUE). This ensures Kafka doesn't stop retrying because of a "retry count" but only stops when the `delivery.timeout.ms` is reached.
+- [ ] **Align Request Timeouts**: Ensure `spring.kafka.producer.properties.request.timeout.ms` is set significantly lower than the delivery timeout (e.g., `30000`).
+- [ ] **Verify Configuration Wiring**: Confirm that `KafkaProducerConfig` correctly retrieves and applies these values to the `ProducerFactory`.
+- [ ] **Review API Send Timeout**: Ensure the `producer.send.timeout.ms` used in `KafkaProducerService` (currently 10000) is much shorter than the background `delivery.timeout.ms`. This allows the API to return a "TIMEOUT" error (clean response) to the user while the Kafka internal thread keeps trying to deliver the message in the background.
+
+---
+
 ### Phase 7 – Next Steps & Future Enhancements 📋 PLANNED
-
-#### Immediate Next Steps (High Priority)
-
-1. **JUnit Integration Tests with Testcontainers** (~1 day)
-
-   **Dependencies to add:**
-   ```xml
-   <dependency>
-       <groupId>org.testcontainers</groupId>
-       <artifactId>testcontainers</artifactId>
-       <version>1.19.8</version>
-       <scope>test</scope>
-   </dependency>
-   <dependency>
-       <groupId>org.testcontainers</groupId>
-       <artifactId>kafka</artifactId>
-       <version>1.19.8</version>
-       <scope>test</scope>
-   </dependency>
-   ```
-
-   **Unit Tests to implement:**
-   - `OrderServiceTest` - Test OrderID normalization logic
-     - Test hex validation (valid: "A", "1B", "ABCD"; invalid: "012G", "", null)
-     - Test padding logic ("A" → "ORD-000A", "ABCD1234" → "ORD-ABCD1234")
-     - Test duplicate order detection
-   - `OrderUtilsTest` - Test order generation utilities
-     - Test item generation (quantity, price ranges)
-     - Test total amount calculation
-   - `KafkaHealthServiceTest` - Test health check logic (with mocked AdminClient)
-
-   **Integration Tests to implement:**
-   - `OrderControllerIntegrationTest` - Test all endpoints with real Kafka
-     - Setup: Testcontainers Kafka instance
-     - Test POST /create-order success (201 Created)
-     - Test PUT /update-order success (200 OK)
-     - Test duplicate order (409 Conflict)
-     - Test invalid OrderID format (400 Bad Request)
-     - Test order not found (404 Not Found)
-     - Test validation errors (400 Bad Request - invalid numItems)
-     - Test health endpoints (/health/live → 200, /health/ready → 200/503)
-     - Verify messages actually published to Kafka topic
-     - Verify message key = orderId
-     - Verify ordering per partition
-
-   **Expected outcome:**
-   - 15-20 test cases passing
-   - Messages verified in Kafka
-   - All error scenarios covered
-   - Test coverage > 70%
-
-2. **Documentation**
-   - ✅ Update README.md with setup/run instructions
-   - ✅ Add API documentation (Swagger/OpenAPI)
-   - ✅ Add architecture diagram (producer-kafka-consumer flow)
-   - ✅ Add troubleshooting guide
 
 #### Optional Future Enhancements (Lower Priority)
 
-- **Schema Management:** Avro + Schema Registry for message contracts
-- **Exactly-Once Semantics:** Coordinator for distributed transactions
-- **UI Dashboard:** Admin console for monitoring orders and Kafka
+1. **JUnit Integration Tests with Testcontainers** (~1 day)
+   - [ ] **Unit Tests**: `OrderServiceTest`, `OrderUtilsTest`, `KafkaHealthServiceTest`.
+   - [ ] **Integration Tests**: `OrderControllerIntegrationTest` with Testcontainers Kafka.
+
+2. **OpenAPI Documentation**
+   - [ ] Add `springdoc-openapi` dependency for Swagger UI.
+   - [ ] Configure OpenAPI metadata (title, version, description).
+   - [ ] Annotated `OrderController` and DTOs with OpenAPI annotations.
+
+3. **Consumer Module Implementation**
+   - [ ] Consume from `order-events` topic.
+   - [ ] Process events per order (respecting key-based ordering).
+   - [ ] Health checks (consumer lag monitoring).
+
+4. **Monitoring & Observability**
+   - [ ] Add Prometheus metrics (Kafka produce latency, success/failure counts).
+   - [ ] Add distributed tracing (Spring Cloud Sleuth).
+
+5. **Documentation**
+   - [ ] Update README.md with setup/run instructions.
+   - [ ] Add architecture diagram (producer-kafka-consumer flow).
 
 ---
 

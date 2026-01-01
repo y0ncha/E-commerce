@@ -117,14 +117,24 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Handle producer send failures (500).
+     * Handle producer send failures (500/503).
      */
     @ExceptionHandler(ProducerSendException.class)
     public ResponseEntity<Map<String, Object>> handleProducerSendException(ProducerSendException ex, HttpServletRequest request) {
         logger.error("Producer send failed: type={}, orderId={}, message={}", ex.getType(), ex.getOrderId(), ex.getMessage());
+        
         Map<String, Object> details = new HashMap<>();
         details.put("type", ex.getType());
         details.put("orderId", ex.getOrderId());
+
+        // If circuit breaker is open, return 503 Service Unavailable
+        if ("CIRCUIT_BREAKER_OPEN".equals(ex.getType())) {
+            Map<String, Object> body = errorBody(request, "Service Unavailable", 
+                    "Kafka service is temporarily unavailable (Circuit Breaker Open)", details);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
+        }
+
+        // Default to 500 Internal Server Error for other send failures
         Map<String, Object> body = errorBody(request, "Internal Server Error", "Failed to publish message", details);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
