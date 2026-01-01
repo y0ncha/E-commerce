@@ -8,12 +8,11 @@ The Producer (Cart Service) implements a layered error handling strategy across 
 
 These errors involve connection to the broker and message delivery. The system handles them through a multi-stage recovery process.
 
-### Level 1: Background Buffering (Time-Based Retries)
+### Level 1: Synchronous Online Retry (Response Accuracy)
 - **Action**: The producer is configured for **indefinite retries** (`retries=2147483647`) within a fixed time window.
-- **Time Limit**: Kafka will attempt to deliver the message for up to **120 seconds** (`delivery.timeout.ms=120000`).
-- **Backoff**: Uses an **exponential backoff** starting at 100ms, preventing a "thundering herd" effect on a recovering broker.
-- **Safety**: With `enable.idempotence=true`, Kafka ensures that even if a resend occurs due to a lost acknowledgment, no duplicate orders are created.
-- **Goal**: Handle temporary network glitches and broker restarts without losing order sequence or data.
+- **Time Limit**: Kafka will attempt to deliver the message for exactly **10 seconds** (`delivery.timeout.ms=10000`), matching the API wait time.
+- **Per-Attempt Timeout**: Each individual request attempt times out after **3 seconds** (`request.timeout.ms=3000`), allowing for ~3 retry attempts within the 10s window.
+- **Goal**: Ensure that if a user receives a failure response, the system has **truly stopped** trying to send the message. This prevents "Ghost Successes" where an order lands in Kafka after the user was told it failed.
 
 ### Level 2: Circuit Breaker (Fail-Fast Mechanism)
 - **Action**: Protected by **Resilience4j**, the system monitors the failure rate of Kafka calls.
@@ -21,9 +20,9 @@ These errors involve connection to the broker and message delivery. The system h
 - **Behavior**: When the circuit is **OPEN**, the system immediately rejects new Kafka calls without attempting them, protecting application threads from exhaustion.
 - **API Response**: The `GlobalExceptionHandler` returns a **503 Service Unavailable** status, informing the client that the service is temporarily unable to handle requests.
 
-### Level 3: Synchronous Timeout & Data Safety
-- **API Timeout**: While Kafka retries in the background for 120s, the API only waits **10 seconds** (`producer.send.timeout.ms`). This ensures the user receives a fast response even if Kafka is slow.
-- **Manual Recovery Fallback**: If the 10s timeout is reached OR the Circuit Breaker is open, the system logs the **full order details** to a dedicated `failed-orders.log` file.
+### Level 3: Data Safety (Manual Recovery Fallback)
+- **Action**: If the 10s timeout is reached OR the Circuit Breaker is open, the system logs the **full order details** to a dedicated `failed-orders.log` file.
+- **Implementation**: A dedicated logger (`FAILED_ORDERS_LOGGER`) captures the order payload and failure reason.
 - **Goal**: Ensure no customer data is lost. This allows an administrator to re-process the orders once the Kafka cluster is restored.
 
 ---
@@ -37,7 +36,7 @@ To ensure the Producer remains a "source of truth," we implement advanced patter
 - **Rollback Logic**: If Kafka fails after the 10s timeout or due to an open circuit, we revert the in-memory `orderStore`:
     - **Create**: The failed order is **removed** from the store.
     - **Update**: The **previous version** of the order is restored.
-- **Consistency Guarantee**: This ensures the local state doesn't "lie" to the user. If the client receives a 500/503 error, they can safely retry the request knowing the system state has been reverted to its pre-failure condition.
+- **Consistency Guarantee**: This ensures the local state doesn't "lie" to the user. If the client receives a 503 error, they can safely retry the request knowing the system state has been reverted to its pre-failure condition.
 
 ### Internal Dead Letter Storage (DLQ)
 - **Corrective Action**: Failed messages are added to an in-memory `failedKafkaMessages` map (keyed by `orderId`).
@@ -77,19 +76,6 @@ The system includes proactive monitoring to prevent failures before they occur.
 
 ---
 
-## 6. Future Enhancements (Planned)
-
-To move beyond returning errors and improve automated recovery, the following patterns are planned:
-
-1. **External Local Persistence (Fallback)**:
-    - In the `catch` block of `KafkaProducerService`, save failed orders to a persistent external database or file (e.g., H2 or a JSON file) to survive application restarts.
-    - A background task will periodically attempt to "re-produce" these failed orders once the broker is back online.
-
-2. **Client-Side Retry Header**:
-    - Include a `Retry-After` header in **503 Service Unavailable** responses to inform clients exactly how long to wait before retrying.
-
----
-
 ## Error Response Examples
 
 ### 400 Validation
@@ -102,25 +88,16 @@ To move beyond returning errors and improve automated recovery, the following pa
 }
 ```
 
-### 503 Service Unavailable (Circuit Breaker Open)
+### 503 Service Unavailable (Circuit Breaker Open or Kafka Timeout)
 ```json
 {
   "timestamp": "2025-12-28T12:00:00.000Z",
   "error": "Service Unavailable",
-  "message": "Kafka service is temporarily unavailable (Circuit Breaker Open)",
+  "message": "The service is temporarily unable to process your request. Please try again later.",
   "path": "/cart-service/create-order",
   "details": {
-    "type": "CIRCUIT_BREAKER_OPEN",
+    "type": "SERVICE_UNAVAILABLE",
     "orderId": "ORD-000A"
   }
-}
-```
-
-### 500 Kafka Timeout (Background Buffering Active)
-```json
-{
-  "error": "Failed to publish message",
-  "type": "TIMEOUT",
-  "orderId": "ORD-000A"
 }
 ```
