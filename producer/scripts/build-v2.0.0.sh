@@ -27,7 +27,7 @@ docker buildx build \
   .
 
 echo ""
-echo "✅ Build completed and pushed successfully!"
+echo "Build completed and pushed successfully! ✅"
 echo ""
 echo "Image: y0ncha/eda-producer:2.0.0"
 echo ""
