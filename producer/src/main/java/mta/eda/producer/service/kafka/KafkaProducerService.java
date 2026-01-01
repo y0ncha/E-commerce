@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * KafkaProducerService
  * Implements a Synchronous Online Retry model.
- * Ensures response accuracy by aligning Kafka retries with the API blocking window.
+ * Uses Kafka's internal retries and idempotence for maximum reliability.
  */
 @Service
 public class KafkaProducerService {
@@ -37,24 +37,21 @@ public class KafkaProducerService {
 
     /**
      * Sends an Order to Kafka synchronously.
-     * Retries occur "online" within the 10s window.
-     * Protected by 'cartService' circuit breaker.
+     * Relies on Kafka's internal retries (configured in application.properties).
      */
     @CircuitBreaker(name = "cartService", fallbackMethod = "sendOrderFallback")
     public void sendOrder(String orderId, Order order) {
         try {
-            // Synchronous block: Kafka retries internally until 10s is reached
+            // Synchronous block: Kafka retries internally until delivery.timeout.ms is reached
             SendResult<String, Order> result = kafkaTemplate.send(topicName, orderId, order)
                     .get(sendTimeoutMs, TimeUnit.MILLISECONDS);
 
-            logger.info("Successfully sent orderId={} partition={} offset={}",
+            logger.info("Successfully sent orderId={} (partition={} offset={})",
                     orderId, result.getRecordMetadata().partition(), result.getRecordMetadata().offset());
 
         } catch (Exception e) {
-            // Log to DLQ for data safety
             logFailedOrder("KAFKA_FAILURE", orderId, order, e.getMessage());
             
-            // Throw to trigger GlobalExceptionHandler (503)
             throw new ServiceUnavailableException("KAFKA_UNAVAILABLE", orderId, 
                     "Kafka delivery failed within the retry window", e);
         }
@@ -62,13 +59,10 @@ public class KafkaProducerService {
 
     /**
      * Fallback method for Circuit Breaker.
-     * Triggered when the circuit is OPEN or a call fails.
      */
     @SuppressWarnings("unused")
     public void sendOrderFallback(String orderId, Order order, Throwable t) {
         logger.error("Circuit Breaker Fallback for orderId={}. Reason: {}", orderId, t.getMessage());
-        
-        // Log to DLQ for data safety
         logFailedOrder("CIRCUIT_BREAKER_FALLBACK", orderId, order, t.getMessage());
         
         throw new ServiceUnavailableException("SERVICE_UNAVAILABLE", orderId,

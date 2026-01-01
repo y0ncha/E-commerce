@@ -54,6 +54,12 @@ public class KafkaProducerConfig {
     @Value("${spring.kafka.producer.properties.delivery.timeout.ms}")
     private int deliveryTimeoutMs;
 
+    @Value("${spring.kafka.producer.properties.max.block.ms:5000}")
+    private int maxBlockMs;
+
+    @Value("${spring.kafka.producer.properties.enable.idempotence:false}")
+    private boolean enableIdempotence;
+
     @Value("${spring.kafka.producer.client-id:eda-producer}")
     private String clientId;
 
@@ -87,9 +93,10 @@ public class KafkaProducerConfig {
         // Timeouts
         configProps.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, requestTimeoutMs);
         configProps.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, deliveryTimeoutMs);
+        configProps.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, maxBlockMs);
 
         // Idempotence
-        configProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+        configProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, enableIdempotence);
 
         return new DefaultKafkaProducerFactory<>(configProps);
     }

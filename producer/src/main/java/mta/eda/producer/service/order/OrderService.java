@@ -24,7 +24,6 @@ import static mta.eda.producer.service.utils.OrderUtils.*;
  * OrderService
  * Business logic for order operations.
  * Creates full Order objects and delegates to KafkaProducerService.
- * Implements Save-with-Rollback and internal DLQ for resiliency.
  */
 @Service
 public class OrderService {
@@ -36,8 +35,7 @@ public class OrderService {
     // In-memory order store (Source of Truth for the API)
     private final Map<String, Order> orderStore = new ConcurrentHashMap<>();
     
-    // Internal Dead Letter Queue (DLQ) for failed Kafka messages (Level 3 Data Safety)
-    // Using ConcurrentHashMap to ensure performance and deduplication (latest failed state per orderId)
+    // Internal Dead Letter Queue (DLQ) for failed Kafka messages
     private final Map<String, Order> failedMessages = new ConcurrentHashMap<>();
 
     public OrderService(KafkaProducerService kafkaProducerService) {
@@ -46,10 +44,6 @@ public class OrderService {
 
     /**
      * Creates a new order and publishes full Order to Kafka.
-     * Implements Save-with-Rollback for consistency.
-     *
-     * @param request The create order request
-     * @throws DuplicateOrderException if order with same orderId already exists
      */
     public Order createOrder(CreateOrderRequest request) {
         logger.info("Creating order with orderId={}, numItems={}",
@@ -78,11 +72,13 @@ public class OrderService {
         }
 
         try {
-            // 2. Attempt Kafka transmission (Synchronous with 10s timeout)
+            // 2. Attempt Kafka transmission
             kafkaProducerService.sendOrder(normalizedOrderId, order);
             
             // Success: Ensure it's removed from DLQ if it was there previously
             failedMessages.remove(normalizedOrderId);
+            
+            return order;
             
         } catch (Exception e) {
             // 3. ROLLBACK: Remove from local store so user can retry
@@ -92,17 +88,12 @@ public class OrderService {
             failedMessages.put(normalizedOrderId, order);
             
             logger.error("Failed to send to Kafka. Rolled back local store and saved to internal DLQ for orderId={}", normalizedOrderId);
-            throw e; // Rethrow to return 500/503 status
+            throw e;
         }
-
-        return order;
     }
 
     /**
      * Updates an existing order and publishes updated full Order to Kafka.
-     * Implements Save-with-Rollback for consistency.
-     *
-     * @param request The update order request
      */
     public Order updateOrder(UpdateOrderRequest request) {
         logger.info("Updating order with orderId={}, status={}", request.orderId(), request.status());
@@ -133,18 +124,18 @@ public class OrderService {
             // Success: Ensure it's removed from DLQ if it was there previously
             failedMessages.remove(normalizedOrderId);
             
+            return updatedOrder;
+            
         } catch (Exception e) {
             // 3. ROLLBACK: Restore original state to maintain consistency
             orderStore.put(normalizedOrderId, existingOrder);
             
-            // 4. DATA SAFETY: Save failed update to internal DLQ (overwrites with latest failed state)
+            // 4. DATA SAFETY: Save failed update to internal DLQ
             failedMessages.put(normalizedOrderId, updatedOrder);
             
             logger.error("Failed to update Kafka. Rolled back local store and saved to internal DLQ for orderId={}", normalizedOrderId);
-            throw e; // Rethrow to return 500/503 status
+            throw e;
         }
-
-        return updatedOrder;
     }
 
     /**

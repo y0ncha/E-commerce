@@ -69,13 +69,12 @@ public class GlobalExceptionHandler {
     /**
      * Handle Infrastructure Failures (503 Service Unavailable).
      * Triggered by Kafka downtime or Circuit Breaker being OPEN.
-     * Aligned with the Synchronous Online Retry model.
      */
     @ExceptionHandler({ServiceUnavailableException.class, CallNotPermittedException.class})
     public ResponseEntity<Map<String, Object>> handleServiceUnavailable(Exception ex, HttpServletRequest request) {
         logger.error("Infrastructure failure: {}", ex.getMessage());
         
-        Map<String, Object> details = new HashMap<>();
+        Map<String, Object> details = new LinkedHashMap<>();
         if (ex instanceof ServiceUnavailableException sue) {
             details.put("type", sue.getType());
             details.put("orderId", sue.getOrderId());
