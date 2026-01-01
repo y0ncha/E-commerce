@@ -161,7 +161,7 @@ This structure demonstrates:
 
 ---
 
-### Phase 6 – Advanced Resiliency 🔄 IN PROGRESS
+### Phase 6 – Advanced Resiliency ✅ COMPLETED
 
 #### TODO 1: Implement a Circuit Breaker (Fail-Fast Mechanism) ✅ COMPLETED
 The goal is to stop attempting to call Kafka once a failure threshold is reached, protecting the system from thread exhaustion.
@@ -172,14 +172,14 @@ The goal is to stop attempting to call Kafka once a failure threshold is reached
 - [x] **Implement Fallback Logic**: Created `sendOrderFallback` to handle `CallNotPermittedException`, log to DLQ, and throw `CIRCUIT_BREAKER_OPEN`.
 - [x] **Update GlobalExceptionHandler**: Added handler for `CIRCUIT_BREAKER_OPEN` to return **503 Service Unavailable**.
 
-#### TODO 2: Increase delivery.timeout.ms (Background Buffering) 📋 PLANNED
+#### TODO 2: Increase delivery.timeout.ms (Background Buffering) ✅ COMPLETED
 The goal is to allow Kafka's background thread to continue retrying during "network blips" while your API returns a fast response if the individual request exceeds its timeout.
 
-- [ ] **Update application.properties**: Increase `spring.kafka.producer.properties.delivery.timeout.ms` to a higher value, such as `120000` (2 minutes), to survive longer disconnections.
-- [ ] **Configure Indefinite Retries**: Set `spring.kafka.producer.retries` to `2147483647` (Integer.MAX_VALUE). This ensures Kafka doesn't stop retrying because of a "retry count" but only stops when the `delivery.timeout.ms` is reached.
-- [ ] **Align Request Timeouts**: Ensure `spring.kafka.producer.properties.request.timeout.ms` is set significantly lower than the delivery timeout (e.g., `30000`).
-- [ ] **Verify Configuration Wiring**: Confirm that `KafkaProducerConfig` correctly retrieves and applies these values to the `ProducerFactory`.
-- [ ] **Review API Send Timeout**: Ensure the `producer.send.timeout.ms` used in `KafkaProducerService` (currently 10000) is much shorter than the background `delivery.timeout.ms`. This allows the API to return a "TIMEOUT" error (clean response) to the user while the Kafka internal thread keeps trying to deliver the message in the background.
+- [x] **Update application.properties**: Increased `spring.kafka.producer.properties.delivery.timeout.ms` to `120000` (2 minutes).
+- [x] **Configure Indefinite Retries**: Set `spring.kafka.producer.retries` to `2147483647` (Integer.MAX_VALUE).
+- [x] **Align Request Timeouts**: Set `spring.kafka.producer.properties.request.timeout.ms` to `30000`.
+- [x] **Verify Configuration Wiring**: Confirmed that `KafkaProducerConfig` correctly retrieves and applies these values.
+- [x] **Review API Send Timeout**: Confirmed `producer.send.timeout.ms` (10000) is shorter than background `delivery.timeout.ms`.
 
 ---
 
