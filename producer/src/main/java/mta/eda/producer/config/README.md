@@ -66,8 +66,8 @@ application.properties → @Value injection → ProducerFactory → KafkaTemplat
 ### 3. Synchronous Online Retry (Architectural Goal)
 - **Strategy:** We prioritize **Response Accuracy**. If a user receives a failure response, the system has truly stopped trying to send the message.
 - **Configuration:** 
-    - `delivery.timeout.ms=10000` (10s) - Matches the API wait time exactly.
-    - `request.timeout.ms=3000` (3s) - Allows ~3 "online" retry attempts within the 10s window.
+    - `delivery.timeout.ms=8000` (8s) - Ensures Kafka gives up before the 10s API timeout.
+    - `request.timeout.ms=3000` (3s) - Allows ~2-3 "online" retry attempts within the 8s window.
     - `retries=2147483647` - Ensures Kafka retries until the time limit is reached.
 - **Benefit:** Prevents "Ghost Successes" where an order lands in Kafka after the user was told it failed.
 
@@ -98,7 +98,7 @@ application.properties → @Value injection → ProducerFactory → KafkaTemplat
 | **`max.in.flight`** | **`1`** | **Ordering guarantee** | **CRITICAL** |
 | **`enable.idempotence`** | **`true`** | **Exactly-once semantics** | **CRITICAL** |
 | `request.timeout.ms` | `3000` | Allows multiple online retries | Important |
-| `delivery.timeout.ms` | `10000` | **Aligned with API timeout** | **CRITICAL** |
+| `delivery.timeout.ms` | `8000` | **Aligned with API timeout** | **CRITICAL** |
 | `topic.name` | `order-events` | Topic for all order events | Required |
 | `topic.partitions` | `3` | Parallel processing | Configurable |
 | `topic.replication-factor` | `1` | Single broker setup | Environment-specific |
@@ -143,5 +143,5 @@ Send 10 failing requests. Verify that subsequent requests return a 503 **instant
 
 ---
 
-**Last Updated:** December 28, 2025  
+**Last Updated:** January 1, 2026
 **Configuration Version:** Synchronous Online Retry Implementation
