@@ -19,6 +19,7 @@ import java.util.Map;
 /**
  * GlobalExceptionHandler
  * Handles API errors for all controllers using a consistent envelope.
+ * Aligned with MTA EDA Exercise 2 requirements.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -67,23 +68,38 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Handle Infrastructure Failures (503 Service Unavailable).
-     * Triggered by Kafka downtime or Circuit Breaker being OPEN.
+     * Handle Active Request Failures (500 Internal Server Error).
+     * Triggered when a producer send fails after retries.
+     * Architectural Reasoning: A failed send is an unexpected server condition during request processing.
      */
-    @ExceptionHandler({ServiceUnavailableException.class, CallNotPermittedException.class})
-    public ResponseEntity<Map<String, Object>> handleServiceUnavailable(Exception ex, HttpServletRequest request) {
-        logger.error("Infrastructure failure: {}", ex.getMessage());
+    @ExceptionHandler(ServiceUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleProducerFailure(ServiceUnavailableException ex, HttpServletRequest request) {
+        logger.error("Producer send failure for orderId={}: {}", ex.getOrderId(), ex.getMessage());
         
         Map<String, Object> details = new LinkedHashMap<>();
-        if (ex instanceof ServiceUnavailableException sue) {
-            details.put("type", sue.getType());
-            details.put("orderId", sue.getOrderId());
-        } else {
-            details.put("type", "CIRCUIT_BREAKER_OPEN");
-        }
+        details.put("type", ex.getType());
+        details.put("orderId", ex.getOrderId());
+
+        Map<String, Object> body = errorBody(request, "Internal Server Error", 
+                "The server encountered an error while publishing the order event.", details);
+        
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
+    }
+
+    /**
+     * Handle Fail-Fast Circuit Breaker (503 Service Unavailable).
+     * Triggered when the circuit is OPEN.
+     * Architectural Reasoning: 503 indicates a temporary state where the service is protecting itself.
+     */
+    @ExceptionHandler(CallNotPermittedException.class)
+    public ResponseEntity<Map<String, Object>> handleCircuitBreakerOpen(CallNotPermittedException ex, HttpServletRequest request) {
+        logger.warn("Circuit Breaker is OPEN - rejecting request");
+        
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("type", "CIRCUIT_BREAKER_OPEN");
 
         Map<String, Object> body = errorBody(request, "Service Unavailable", 
-                "The service is temporarily unable to process your request. Please try again later.", details);
+                "The service is temporarily unavailable due to high failure rates. Please try again later.", details);
         
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
     }

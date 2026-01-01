@@ -1,5 +1,6 @@
 package mta.eda.producer.service.kafka;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import mta.eda.producer.exception.ServiceUnavailableException;
 import mta.eda.producer.model.Order;
@@ -52,21 +53,37 @@ public class KafkaProducerService {
         } catch (Exception e) {
             logFailedOrder("KAFKA_FAILURE", orderId, order, e.getMessage());
             
-            throw new ServiceUnavailableException("KAFKA_UNAVAILABLE", orderId, 
-                    "Kafka delivery failed within the retry window", e);
+            // Throw specific exception for the fallback/handler to catch
+            throw new ServiceUnavailableException("KAFKA_DOWN", orderId, 
+                    "Message broker is unreachable or timed out", e);
         }
     }
 
     /**
      * Fallback method for Circuit Breaker.
+     * Distinguishes between an open circuit and a direct Kafka failure.
      */
     @SuppressWarnings("unused")
     public void sendOrderFallback(String orderId, Order order, Throwable t) {
-        logger.error("Circuit Breaker Fallback for orderId={}. Reason: {}", orderId, t.getMessage());
-        logFailedOrder("CIRCUIT_BREAKER_FALLBACK", orderId, order, t.getMessage());
+        String type;
+        String message;
+
+        if (t instanceof CallNotPermittedException) {
+            type = "CIRCUIT_BREAKER_OPEN";
+            message = "Service is temporarily unavailable due to high failure rate (Circuit Breaker Open)";
+        } else if (t instanceof ServiceUnavailableException sue) {
+            // Preserve the specific type (e.g., KAFKA_DOWN) thrown in the try block
+            type = sue.getType();
+            message = sue.getMessage();
+        } else {
+            type = "KAFKA_ERROR";
+            message = "An unexpected error occurred while communicating with the message broker";
+        }
+
+        logger.error("Fallback triggered for orderId={} | Type: {} | Reason: {}", orderId, type, t.getMessage());
+        logFailedOrder("FALLBACK_" + type, orderId, order, t.getMessage());
         
-        throw new ServiceUnavailableException("SERVICE_UNAVAILABLE", orderId,
-                "Cart service is temporarily unavailable (Circuit Breaker Open or Kafka Down)", t);
+        throw new ServiceUnavailableException(type, orderId, message, t);
     }
 
     private void logFailedOrder(String type, String orderId, Order order, String reason) {

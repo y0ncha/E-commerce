@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * KafkaHealthService
- * Performs readiness checks against Kafka using AdminClient.
+ * Performs readiness checks against Kafka.
  * Designed to be safe for HTTP endpoints (short timeouts + caching).
  */
 @Service
@@ -104,9 +104,12 @@ public class KafkaHealthService {
 
     private KafkaStatus checkOnce() {
         Map<String, Object> props = new HashMap<>();
-        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        String servers = (bootstrapServers != null) ? bootstrapServers : "localhost:9092";
+        
+        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, servers);
         props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, (int) healthTimeoutMs);
         props.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, (int) healthTimeoutMs);
+        props.put(AdminClientConfig.CLIENT_ID_CONFIG, "health-check-client");
 
         try (AdminClient admin = AdminClient.create(props)) {
 
@@ -117,14 +120,12 @@ public class KafkaHealthService {
                         .get(healthTimeoutMs, TimeUnit.MILLISECONDS);
 
                 if (brokers.isEmpty()) {
-                    return new KafkaStatus(false, "BROKER_DOWN: Cluster returned no nodes. Check bootstrap-servers: " + bootstrapServers);
+                    return new KafkaStatus(false, "BROKER_UNREACHABLE: No active brokers found at " + servers);
                 }
             } catch (java.util.concurrent.TimeoutException te) {
-                return new KafkaStatus(false, String.format("CLUSTER_TIMEOUT: Failed to connect to Kafka brokers within %dms. Check if brokers are running at %s",
-                        healthTimeoutMs, bootstrapServers));
+                return new KafkaStatus(false, String.format("CONNECTION_TIMEOUT: Failed to reach message broker within %dms.", healthTimeoutMs));
             } catch (ExecutionException ee) {
-                Throwable cause = ee.getCause();
-                return new KafkaStatus(false, "CLUSTER_ERROR: " + (cause != null ? cause.getMessage() : ee.getMessage()));
+                return new KafkaStatus(false, "CONNECTION_ERROR: Could not establish connection to the broker.");
             }
 
             // 2) Verify topic exists
@@ -137,24 +138,25 @@ public class KafkaHealthService {
                 // 3) Verify topic has at least one partition with a leader
                 for (TopicPartitionInfo p : topicDesc.partitions()) {
                     if (p.leader() == null) {
-                        return new KafkaStatus(false, String.format("NO_LEADER: Topic '%s' partition %d has no leader. Check broker logs.", topicName, p.partition()));
+                        return new KafkaStatus(false, String.format("TOPIC_UNAVAILABLE: Topic '%s' partition %d has no leader.", topicName, p.partition()));
                     }
                 }
 
                 return new KafkaStatus(true, "OK");
 
             } catch (java.util.concurrent.TimeoutException te) {
-                return new KafkaStatus(false, String.format("TOPIC_TIMEOUT: Timed out (%dms) fetching metadata for topic '%s'.", healthTimeoutMs, topicName));
+                return new KafkaStatus(false, String.format("METADATA_TIMEOUT: Timed out fetching metadata for topic '%s'.", topicName));
             } catch (ExecutionException ee) {
                 Throwable cause = ee.getCause();
                 if (cause instanceof UnknownTopicOrPartitionException) {
-                    return new KafkaStatus(false, "TOPIC_NOT_FOUND: Topic '" + topicName + "' does not exist. Ensure it is created.");
+                    return new KafkaStatus(false, "TOPIC_NOT_FOUND: The required topic '" + topicName + "' does not exist.");
                 }
-                return new KafkaStatus(false, "TOPIC_ERROR: " + (cause != null ? cause.getMessage() : ee.getMessage()));
+                return new KafkaStatus(false, "METADATA_ERROR: Could not retrieve topic information.");
             }
 
         } catch (Exception e) {
-            return new KafkaStatus(false, "UNEXPECTED_ERROR: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+            logger.error("Kafka health check initialization failed", e);
+            return new KafkaStatus(false, "KAFKA_INITIALIZATION_ERROR: Could not initialize connection to the message broker.");
         }
     }
 }
