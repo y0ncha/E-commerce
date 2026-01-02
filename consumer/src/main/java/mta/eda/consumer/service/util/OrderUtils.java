@@ -29,21 +29,29 @@ public final class OrderUtils {
      * @throws IllegalArgumentException if orderId is not in valid hexadecimal format
      */
     public static String normalizeOrderId(String rawOrderId) {
-        // If already has ORD- prefix, return as is
-        if (rawOrderId.startsWith("ORD-")) {
-            return rawOrderId;
+        if (rawOrderId == null) {
+            throw new IllegalArgumentException("orderId is required");
         }
 
-        String symbols = rawOrderId.trim().toUpperCase();
+        String trimmed = rawOrderId.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("orderId is required");
+        }
 
-        // Validate hexadecimal format
+        String withoutPrefix = trimmed.toUpperCase().startsWith("ORD-")
+                ? trimmed.substring(4)
+                : trimmed;
+
+        String symbols = withoutPrefix.trim().toUpperCase();
+
         if (!symbols.matches("[0-9A-F]+")) {
             throw new IllegalArgumentException("Invalid orderId format: must be hexadecimal");
         }
 
-        // Pad to 4 digits minimum, then add ORD- prefix
-        String padded = symbols.length() < 4 ? String.format("%4s", symbols).replace(' ', '0') : symbols;
+        String padded = symbols.length() < 4
+                ? String.format("%4s", symbols).replace(' ', '0')
+                : symbols;
+
         return "ORD-" + padded;
     }
 }
-

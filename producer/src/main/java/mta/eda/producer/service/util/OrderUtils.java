@@ -1,5 +1,6 @@
 package mta.eda.producer.service.util;
 
+import mta.eda.producer.exception.InvalidOrderIdException;
 import mta.eda.producer.model.order.OrderItem;
 
 import java.math.BigDecimal;
@@ -57,5 +58,32 @@ public final class OrderUtils {
         return BigDecimal.valueOf(value)
                 .setScale(2, RoundingMode.HALF_UP)
                 .doubleValue();
+    }
+
+    public static String normalizeOrderId(String rawOrderId) {
+        if (rawOrderId == null) {
+            throw new InvalidOrderIdException("orderId is required");
+        }
+
+        String trimmed = rawOrderId.trim();
+        if (trimmed.isEmpty()) {
+            throw new InvalidOrderIdException("orderId is required");
+        }
+
+        String withoutPrefix = trimmed.toUpperCase().startsWith("ORD-")
+                ? trimmed.substring(4)
+                : trimmed;
+
+        String symbols = withoutPrefix.trim().toUpperCase();
+
+        if (!symbols.matches("[0-9A-F]+")) {
+            throw new InvalidOrderIdException(rawOrderId);
+        }
+
+        String padded = symbols.length() < 4
+                ? String.format("%4s", symbols).replace(' ', '0')
+                : symbols;
+
+        return "ORD-" + padded;
     }
 }

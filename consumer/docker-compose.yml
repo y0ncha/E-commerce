@@ -18,11 +18,8 @@
 #      cd ../producer && docker compose up -d
 #    Step 2: Start Consumer
 #      cd ../consumer && docker compose up -d
-#    Step 3: Connect Consumer to Producer's network
-#      docker network connect producer_ecommerce-network order-service
-#    Step 4: Restart Consumer to activate connection
-#      docker restart order-service
-#    - Consumer can now resolve 'kafka:29092' via Docker DNS
+#    - Consumer automatically connects to 'producer_ecommerce-network'
+#    - Consumer can resolve 'kafka:29092' via Docker DNS
 #    - Health check shows Kafka as UP
 #    - Kafka listeners start consuming messages
 #
@@ -52,5 +49,11 @@ services:
       retries: 5
       start_period: 20s
     restart: unless-stopped
+    networks:
+      - default
+      - producer-net
 
-
+networks:
+  producer-net:
+    external: true
+    name: producer_ecommerce-network
