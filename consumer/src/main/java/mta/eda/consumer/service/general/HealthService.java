@@ -3,9 +3,10 @@ package mta.eda.consumer.service.general;
 import mta.eda.consumer.model.response.HealthCheck;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+
+import java.util.Optional;
 
 /**
  * HealthService - Handles health check operations for the Consumer service.
@@ -16,10 +17,9 @@ public class HealthService {
 
     private static final Logger logger = LoggerFactory.getLogger(HealthService.class);
 
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final Optional<KafkaTemplate<String, String>> kafkaTemplate;
 
-    @Autowired
-    public HealthService(KafkaTemplate<String, String> kafkaTemplate) {
+    public HealthService(Optional<KafkaTemplate<String, String>> kafkaTemplate) {
         this.kafkaTemplate = kafkaTemplate;
     }
 
@@ -47,13 +47,20 @@ public class HealthService {
      */
     public HealthCheck getKafkaStatus() {
         try {
-            // Attempt to get the producer metrics as a lightweight connectivity check
-            // If we can access the template, Kafka is configured and accessible
-            if (kafkaTemplate != null && kafkaTemplate.getDefaultTopic() != null) {
-                return new HealthCheck("UP", "Kafka broker is accessible");
-            }
-            // KafkaTemplate is available but no default topic set
-            return new HealthCheck("UP", "Kafka broker connectivity verified");
+            // Check if KafkaTemplate is available
+            return kafkaTemplate
+                .map(template -> {
+                    try {
+                        if (template.getDefaultTopic() != null) {
+                            return new HealthCheck("UP", "Kafka broker is accessible");
+                        }
+                        return new HealthCheck("UP", "Kafka broker connectivity verified");
+                    } catch (Exception e) {
+                        logger.error("Error checking Kafka connectivity", e);
+                        return new HealthCheck("DOWN", "Kafka broker is unavailable: " + e.getMessage());
+                    }
+                })
+                .orElse(new HealthCheck("DOWN", "Kafka not configured"));
         } catch (Exception e) {
             logger.error("Error checking Kafka status", e);
             return new HealthCheck("DOWN", "Kafka broker is unavailable: " + e.getMessage());
