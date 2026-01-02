@@ -4,10 +4,13 @@
 
 This directory contains automated Postman test collections for **Exercise 2** of the EDA (Event-Driven Architecture) course. The test suites validate Kafka-based resilience patterns, event sequencing guarantees, and data quality controls in the E-commerce microservices system.
 
+**Total Test Requests:** 48 across 3 collections
+
 ## Test Collections
 
 ### 1. Ex02-Resilience-and-Idempotency.postman_collection.json
-**Focus:** Resilience patterns and idempotent message processing
+**Focus:** Resilience patterns and idempotent message processing  
+**Total Requests:** 12
 
 **Test Coverage:**
 - ✅ **Health Checks:** Verify Producer and Consumer services with Kafka connectivity
@@ -31,7 +34,8 @@ This directory contains automated Postman test collections for **Exercise 2** of
 ---
 
 ### 2. Ex02-Sequencing.postman_collection.json
-**Focus:** Event ordering and state machine validation
+**Focus:** Event ordering and state machine validation  
+**Total Requests:** 17
 
 **Test Coverage:**
 - ✅ **Valid Transitions:** `CREATED → CONFIRMED → DISPATCHED → DELIVERED`
@@ -63,11 +67,12 @@ DELIVERED   → [Terminal - No transitions]       ❌
 ---
 
 ### 3. Ex02-Validation.postman_collection.json
-**Focus:** Input validation and data quality
+**Focus:** Input validation and data quality  
+**Total Requests:** 19 (organized in 3 folders)
 
 **Test Coverage:**
 
-**Producer Validation:**
+**Producer Validation:** (10 requests)
 - ✅ Missing required fields (`orderId`, `numItems`)
 - ✅ Empty/blank values
 - ✅ Invalid orderId format (non-hexadecimal characters)
@@ -75,13 +80,13 @@ DELIVERED   → [Terminal - No transitions]       ❌
 - ✅ Malformed JSON
 - ✅ Extra/unknown fields (gracefully ignored)
 
-**Consumer Validation:**
+**Consumer Validation:** (6 requests)
 - ✅ Missing required fields (`orderId`, `topicName`)
 - ✅ Empty/blank values
 - ✅ Invalid orderId format (non-hex characters)
 - ✅ Malformed JSON
 
-**Boundary Conditions:**
+**Boundary Conditions:** (3 requests)
 - ✅ Zero `numItems`
 - ✅ Negative `numItems`
 - ✅ Very long `orderId` (1000 characters)
