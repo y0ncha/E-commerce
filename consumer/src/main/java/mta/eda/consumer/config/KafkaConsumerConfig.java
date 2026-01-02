@@ -1,5 +1,6 @@
 package mta.eda.consumer.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,8 +15,8 @@ import org.springframework.kafka.listener.ContainerProperties;
 import java.util.HashMap;
 import java.util.Map;
 
-@EnableKafka
 @Configuration
+@EnableKafka
 public class KafkaConsumerConfig {
 
     @Value("${spring.kafka.bootstrap-servers}")
@@ -24,24 +25,28 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.consumer.group-id}")
     private String groupId;
 
+    /**
+     * ConsumerFactory: Configures the Kafka consumer with proper deserialization and settings.
+     */
     @Bean
     public ConsumerFactory<String, String> consumerFactory() {
         Map<String, Object> props = new HashMap<>();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
-
-        // Manual offset management requires auto-commit to be false
-        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
-
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-
-        // Start from the beginning if no offset is found
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
+        // MANDATORY: Disable auto-commit for manual acknowledgment control
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
 
         return new DefaultKafkaConsumerFactory<>(props);
     }
 
+    /**
+     * KafkaListenerContainerFactory: Configures the listener container with manual acknowledgment.
+     * This ensures At-Least-Once delivery semantics.
+     */
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory() {
         ConcurrentKafkaListenerContainerFactory<String, String> factory =
@@ -53,4 +58,14 @@ public class KafkaConsumerConfig {
 
         return factory;
     }
+
+    /**
+     * ObjectMapper Bean: Provides JSON serialization/deserialization capability.
+     * This bean is required by KafkaConsumerService for converting JSON messages to Order objects.
+     */
+    @Bean
+    public ObjectMapper objectMapper() {
+        return new ObjectMapper();
+    }
 }
+
