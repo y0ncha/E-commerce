@@ -7,7 +7,7 @@ import mta.eda.producer.exception.ServiceUnavailableException;
 import mta.eda.producer.model.request.CreateOrderRequest;
 import mta.eda.producer.model.order.Order;
 import mta.eda.producer.model.request.UpdateOrderRequest;
-import mta.eda.producer.service.general.KafkaProducerService;
+import mta.eda.producer.service.kafka.KafkaProducerService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

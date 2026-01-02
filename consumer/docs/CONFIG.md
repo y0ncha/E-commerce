@@ -219,7 +219,7 @@ Configuration values follow the precedence: **Command-line → Environment Varia
 
 ### Log Format (Spring Boot Default)
 ```
-2026-01-02 12:00:00.000 INFO  [order-service] mta.eda.consumer.service.general.KafkaConsumerService
+2026-01-02 12:00:00.000 INFO  [order-service] mta.eda.consumer.service.kafka.KafkaConsumerService
 ```
 
 ---

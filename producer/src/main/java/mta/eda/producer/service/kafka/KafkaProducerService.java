@@ -1,4 +1,4 @@
-package mta.eda.producer.service.general;
+package mta.eda.producer.service.kafka;
 
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
