@@ -1,0 +1,301 @@
+{
+  "info": {
+    "name": "Sanity",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Automated sanity test suite for Exercise 2 - verifies resilience and sequencing"
+  },
+  "item": [
+    {
+      "name": "Health Check (Consumer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Kafka connection is UP\", () => {",
+              "  const jsonData = pm.response.json();",
+              "  pm.expect(jsonData.checks, \"checks object missing\").to.exist;",
+              "  pm.expect(jsonData.checks.kafka, \"Kafka check missing\").to.exist;",
+              "  pm.expect(jsonData.checks.kafka.status).to.eql(\"UP\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url_consumer}}/order-service/health/ready",
+          "host": ["{{base_url_consumer}}"],
+          "path": ["order-service", "health", "ready"]
+        },
+        "description": "Verifies Consumer service is ready and Kafka connection is UP"
+      }
+    },
+    {
+      "name": "Create Order (Producer)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function generateHexId(length) {",
+              "  let result = '';",
+              "  const characters = '0123456789ABCDEF';",
+              "  const charactersLength = characters.length;",
+              "  for (let i = 0; i < length; i++) {",
+              "    result += characters.charAt(Math.floor(Math.random() * charactersLength));",
+              "  }",
+              "  return result;",
+              "}",
+              "pm.environment.set(\"order_id\", generateHexId(16));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Order Created successfully\", () => pm.response.to.have.status(201));",
+              "pm.test(\"Returns valid OrderID\", () => {",
+              "  const jsonData = pm.response.json();",
+              "  pm.expect(jsonData.order).to.exist;",
+              "  pm.expect(jsonData.order.orderId).to.be.a('string');",
+              "  pm.expect(jsonData.order.orderId.length).to.be.above(0);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"orderId\": \"{{order_id}}\",\n  \"numItems\": 5\n}"
+        },
+        "url": {
+          "raw": "{{base_url_producer}}/cart-service/create-order",
+          "host": ["{{base_url_producer}}"],
+          "path": ["cart-service", "create-order"]
+        },
+        "description": "Creates a new order in the Producer (Cart Service)"
+      }
+    },
+    {
+      "name": "Get Order Details - Initial State (Consumer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Shipping cost is calculated and status is CREATED\", () => {",
+              "  const jsonData = pm.response.json();",
+              "  pm.expect(jsonData.shippingCost).to.exist;",
+              "  const shippingCost = parseFloat(jsonData.shippingCost);",
+              "  pm.expect(shippingCost).to.be.above(0);",
+              "  pm.expect(jsonData.status).to.eql(\"CREATED\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"orderId\": \"{{order_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url_consumer}}/order-service/order-details",
+          "host": ["{{base_url_consumer}}"],
+          "path": ["order-service", "order-details"]
+        },
+        "description": "Verifies Consumer mirrored the CREATED state and calculated shipping cost"
+      }
+    },
+    {
+      "name": "Update Order Status (Producer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Update accepted by Producer\", () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"orderId\": \"{{order_id}}\",\n  \"status\": \"DISPATCHED\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url_producer}}/cart-service/update-order",
+          "host": ["{{base_url_producer}}"],
+          "path": ["cart-service", "update-order"]
+        },
+        "description": "Updates order status to DISPATCHED via Producer"
+      }
+    },
+    {
+      "name": "Verify Sequential Update (Consumer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Consumer reflected DISPATCHED status\", () => {",
+              "  const jsonData = pm.response.json();",
+              "  pm.expect(jsonData.status).to.eql(\"DISPATCHED\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"orderId\": \"{{order_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url_consumer}}/order-service/order-details",
+          "host": ["{{base_url_consumer}}"],
+          "path": ["order-service", "order-details"]
+        },
+        "description": "Verifies that Consumer updated state to DISPATCHED via Kafka"
+      }
+    },
+    {
+      "name": "Resilience - Invalid Transition (Consumer Check)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Producer did not crash\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 400, 409]);",
+              "});",
+              "",
+              "pm.test(\"Verification: Consumer ignored old status\", () => {",
+              "  const base = pm.environment.get(\"base_url_consumer\");",
+              "  const orderId = pm.environment.get(\"order_id\");",
+              "  const payload = JSON.stringify({ orderId: orderId });",
+              "  ",
+              "  pm.sendRequest({",
+              "    url: `${base}/order-service/order-details`,",
+              "    method: 'POST',",
+              "    header: { 'Content-Type': 'application/json' },",
+              "    body: { mode: 'raw', raw: payload }",
+              "  }, (err, res) => {",
+              "    pm.expect(err).to.equal(null);",
+              "    pm.expect(res.code).to.eql(200);",
+              "    pm.expect(res.json().status).to.eql(\"DISPATCHED\");",
+              "  });",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"orderId\": \"{{order_id}}\",\n  \"status\": \"CREATED\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url_producer}}/cart-service/update-order",
+          "host": ["{{base_url_producer}}"],
+          "path": ["cart-service", "update-order"]
+        },
+        "description": "Attempts invalid transition from DISPATCHED to CREATED - Consumer must ignore"
+      }
+    },
+    {
+      "name": "Diagnostic Check (Consumer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Topic contains our OrderID\", () => {",
+              "  const jsonData = pm.response.json();",
+              "  const orderId = pm.environment.get(\"order_id\");",
+              "  pm.expect(orderId && orderId.length > 0, \"order_id missing in env\").to.be.true;",
+              "  pm.expect(jsonData.orderIds).to.exist;",
+              "  pm.expect(jsonData.orderIds).to.be.an('array');",
+              "  const normalizedOrderId = `ORD-${orderId.padStart(4, '0')}`;",
+              "  const found = jsonData.orderIds.includes(orderId) || jsonData.orderIds.includes(normalizedOrderId);",
+              "  pm.expect(found, `Order ID not found. Looking for ${orderId} or ${normalizedOrderId}`).to.be.true;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"topicName\": \"orders\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url_consumer}}/order-service/getAllOrdersFromTopic",
+          "host": ["{{base_url_consumer}}"],
+          "path": ["order-service", "getAllOrdersFromTopic"]
+        },
+        "description": "Verifies that the topic contains the created order ID"
+      }
+    }
+  ]
+}
