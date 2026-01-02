@@ -145,6 +145,47 @@ Once an order passes idempotency and sequencing checks, it must be safely persis
 
 ## Phase 4: Resilience & Error Handling Implementation
 
+### GlobalExceptionHandler Integration
+The consumer implements a **GlobalExceptionHandler** to centrally manage all API exceptions and provide consistent error responses across all endpoints.
+
+#### **Exception Handlers Implemented (6 Total)**
+
+**1. MethodArgumentNotValidException** → HTTP 400
+- **When**: DTO validation fails (@NotBlank, @Pattern)
+- **Logging**: `logger.warn("Validation error: {}")`
+- **Response**: Includes field-level error details
+- **Example**: Empty orderId fails @NotBlank validation
+
+**2. HttpMessageNotReadableException** → HTTP 400
+- **When**: Malformed JSON in request body
+- **Logging**: `logger.warn("Malformed JSON received: {}")`
+- **Response**: Generic "Invalid request body" message
+- **Example**: Invalid JSON syntax in POST body
+
+**3. InvalidOrderIdException** → HTTP 400
+- **When**: Custom exception for invalid orderId format
+- **Logging**: `logger.warn("Invalid orderId format: {}")`
+- **Response**: Includes orderId and hex format requirement
+- **Example**: OrderId "XYZ" (X, Y, Z not hexadecimal)
+
+**4. IllegalArgumentException** → HTTP 400
+- **When**: OrderUtils.normalizeOrderId() throws for invalid hex
+- **Logging**: `logger.warn("Illegal argument error: {}")`
+- **Response**: Error message from exception
+- **Example**: normalizeOrderId() validation failure
+
+**5. OrderNotFoundException** → HTTP 404
+- **When**: Order not found in state store
+- **Logging**: `logger.info("Order not found: {}")`
+- **Response**: Includes orderId in details
+- **Example**: Query for non-existent order
+
+**6. Exception (Catch-All)** → HTTP 500
+- **When**: Any unhandled exception
+- **Logging**: `logger.error("Unhandled error: {}", ex.getMessage(), ex)` (with full stack trace)
+- **Response**: Generic "Internal Server Error" message
+- **Example**: NullPointerException, OutOfMemoryError, etc.
+
 ### HealthService Integration
 The consumer implements a **HealthService** to monitor service health and dependencies:
 

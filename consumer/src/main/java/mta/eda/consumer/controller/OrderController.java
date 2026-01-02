@@ -1,6 +1,8 @@
 package mta.eda.consumer.controller;
 
 import jakarta.validation.Valid;
+import mta.eda.consumer.exception.InvalidOrderIdException;
+import mta.eda.consumer.exception.OrderNotFoundException;
 import mta.eda.consumer.model.order.ProcessedOrder;
 import mta.eda.consumer.model.request.AllOrdersFromTopicRequest;
 import mta.eda.consumer.model.request.OrderDetailsRequest;
@@ -73,12 +75,12 @@ public class OrderController {
         orders.put("orderDetails", new HashMap<String, Object>() {{
             put("method", "POST");
             put("path", "/order-service/order-details");
-            put("description", "Get order details (With shipping cost)");
+            put("description", "Get order details");
         }});
         orders.put("getAllOrdersFromTopic", new HashMap<String, Object>() {{
             put("method", "POST");
             put("path", "/order-service/getAllOrdersFromTopic");
-            put("description", "Get all order IDs received from a specified topic");
+            put("description", "Get all order IDs from topic");
         }});
 
         endpoints.put("health", health);
@@ -144,44 +146,43 @@ public class OrderController {
      * Get order details by orderId.
      *
      * @param request OrderDetailsRequest containing orderId (hex format validation)
-     * @return Order details with calculated shipping cost, or 404 if not found
+     * @return Order details with calculated shipping cost
+     * @throws OrderNotFoundException if order is not found
+     * @throws InvalidOrderIdException if orderId format is invalid
      */
     @PostMapping("/order-details")
     public ResponseEntity<Map<String, Object>> getOrderDetails(@Valid @RequestBody OrderDetailsRequest request) {
-        String orderId = request.orderId();
-        logger.info("Received order details request: orderId={}", orderId);
+        String rawOrderId = request.orderId();
+        logger.info("Received order details request: orderId={}", rawOrderId);
 
-        // Query the order service
-        Optional<ProcessedOrder> processedOrder = orderService.getProcessedOrder(orderId);
+        try {
+            // Query the order service (normalizeOrderId is called internally)
+            Optional<ProcessedOrder> processedOrder = orderService.getProcessedOrder(rawOrderId);
 
-        if (processedOrder.isEmpty()) {
-            logger.warn("Order not found: orderId={}", orderId);
+            if (processedOrder.isEmpty()) {
+                logger.warn("Order not found: orderId={}", rawOrderId);
+                throw new OrderNotFoundException(rawOrderId);
+            }
 
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("timestamp", System.currentTimeMillis());
-            errorResponse.put("error", "Not Found");
-            errorResponse.put("message", "Order with ID '" + orderId + "' not found in the system");
-            errorResponse.put("orderId", orderId);
-            errorResponse.put("path", "/order-service/order-details");
+            ProcessedOrder order = processedOrder.get();
+            logger.info("Order found: orderId={}, status={}, shippingCost={}",
+                rawOrderId, order.order().status(), String.format("%.2f", order.shippingCost()));
 
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
+            Map<String, Object> response = new HashMap<>();
+            response.put("orderId", order.order().orderId());
+            response.put("customerId", order.order().customerId());
+            response.put("orderDate", order.order().orderDate());
+            response.put("status", order.order().status());
+            response.put("items", order.order().items());
+            response.put("totalAmount", order.order().totalAmount());
+            response.put("currency", order.order().currency());
+            response.put("shippingCost", String.format("%.2f", order.shippingCost()));
+
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            // Thrown by normalizeOrderId for invalid hex format
+            throw new InvalidOrderIdException(rawOrderId, e.getMessage());
         }
-
-        ProcessedOrder order = processedOrder.get();
-        logger.info("Order found: orderId={}, status={}, shippingCost={}",
-            orderId, order.order().status(), String.format("%.2f", order.shippingCost()));
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("orderId", order.order().orderId());
-        response.put("customerId", order.order().customerId());
-        response.put("orderDate", order.order().orderDate());
-        response.put("status", order.order().status());
-        response.put("items", order.order().items());
-        response.put("totalAmount", order.order().totalAmount());
-        response.put("currency", order.order().currency());
-        response.put("shippingCost", String.format("%.2f", order.shippingCost()));
-
-        return ResponseEntity.ok(response);
     }
 
     /**

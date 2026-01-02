@@ -2,7 +2,7 @@ package mta.eda.consumer.service.order;
 
 import mta.eda.consumer.model.order.Order;
 import mta.eda.consumer.model.order.ProcessedOrder;
-import static mta.eda.consumer.service.utils.OrderUtils.calculateShippingCost;
+import static mta.eda.consumer.service.utils.OrderUtils.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -65,20 +65,25 @@ public class OrderService {
 
     /**
      * Get an order by its ID.
+     * Normalizes the orderId with ORD- prefix before lookup.
+     * @param rawOrderId the raw order ID (may or may not have ORD- prefix)
      * @return Optional containing the order if found
      */
-    public Optional<Order> getOrder(String orderId) {
-        return Optional.ofNullable(processedOrderStore.get(orderId))
+    public Optional<Order> getOrder(String rawOrderId) {
+        String normalizedOrderId = normalizeOrderId(rawOrderId);
+        return Optional.ofNullable(processedOrderStore.get(normalizedOrderId))
                 .map(ProcessedOrder::order);
     }
 
     /**
      * Get a processed order (order and shipping cost) by its ID.
-     * @param orderId the order ID
+     * Normalizes the orderId with ORD- prefix before lookup.
+     * @param rawOrderId the raw order ID (may or may not have ORD- prefix)
      * @return Optional containing the processed order if found
      */
-    public Optional<ProcessedOrder> getProcessedOrder(String orderId) {
-        return Optional.ofNullable(processedOrderStore.get(orderId));
+    public Optional<ProcessedOrder> getProcessedOrder(String rawOrderId) {
+        String normalizedOrderId = normalizeOrderId(rawOrderId);
+        return Optional.ofNullable(processedOrderStore.get(normalizedOrderId));
     }
 
     /**
@@ -140,4 +145,5 @@ public class OrderService {
                 ));
     }
 }
+
 

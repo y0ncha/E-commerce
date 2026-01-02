@@ -11,6 +11,11 @@ consumer/
 │   ├── controller/
 │   │   └── OrderController.java              # REST API endpoints (root, health, orders)
 │   │
+│   ├── exception/
+│   │   ├── GlobalExceptionHandler.java       # Centralized exception handling (6 handlers)
+│   │   ├── OrderNotFoundException.java       # Custom exception for 404 errors
+│   │   └── InvalidOrderIdException.java      # Custom exception for validation errors
+│   │
 │   ├── model/
 │   │   ├── order/
 │   │   │   ├── Order.java                    # Order record (from Kafka events)
@@ -32,8 +37,11 @@ consumer/
 │       ├── kafka/
 │       │   └── KafkaConsumerService.java     # Kafka listener (@KafkaListener)
 │       │
-│       └── order/
-│           └── OrderService.java             # Order processing logic (idempotency, sequencing, shipping)
+│       ├── order/
+│       │   └── OrderService.java             # Order processing logic (idempotency, sequencing, shipping)
+│       │
+│       └── utils/
+│           └── OrderUtils.java               # Utility methods (shipping cost, orderId normalization)
 │
 ├── src/main/resources/
 │   └── application.properties                # Spring Boot configuration (Kafka, logging)
@@ -62,7 +70,39 @@ consumer/
 - Enables **MANUAL_IMMEDIATE** acknowledgment mode
 - Provides `ObjectMapper` bean for JSON deserialization
 
-### **controller/OrderController.java**
+### **exception/GlobalExceptionHandler.java**
+Centralized exception handler for all API errors with consistent error responses:
+
+**6 Exception Handlers:**
+1. `MethodArgumentNotValidException` → HTTP 400 (validation errors, field errors)
+2. `HttpMessageNotReadableException` → HTTP 400 (malformed JSON)
+3. `InvalidOrderIdException` → HTTP 400 (custom exception, orderId validation)
+4. `IllegalArgumentException` → HTTP 400 (OrderUtils validation failures)
+5. `OrderNotFoundException` → HTTP 404 (order not found in state store)
+6. `Exception` (catch-all) → HTTP 500 (unhandled exceptions, stack trace logged)
+
+**Logging Levels:**
+- WARN for 400 errors (client's fault)
+- INFO for 404 errors (expected, not found)
+- ERROR for 500 errors (with full stack trace)
+
+### **exception/OrderNotFoundException.java**
+Custom exception thrown when order not found:
+```java
+public class OrderNotFoundException extends RuntimeException {
+    private final String orderId;
+    public String getOrderId() { ... }
+}
+```
+
+### **exception/InvalidOrderIdException.java**
+Custom exception for invalid orderId format:
+```java
+public class InvalidOrderIdException extends RuntimeException {
+    private final String orderId;
+    public String getOrderId() { ... }
+}
+```
 - **Root Endpoint** (GET /order-service/): Service metadata with structured endpoints
 - **Live Probe** (GET /order-service/health/live): Liveness check via HealthService
 - **Ready Probe** (GET /order-service/health/ready): Readiness check with Kafka connectivity
@@ -142,12 +182,14 @@ Core event processing logic:
 |---------|---------|-----------------|
 | **config** | Configuration | Bean setup, Kafka factory |
 | **controller** | API Layer | HTTP endpoints, request/response handling |
+| **exception** | Error Handling | GlobalExceptionHandler, custom exceptions |
 | **model.order** | Domain Objects | Order entities (records) |
 | **model.request** | Input DTOs | Request validation |
 | **model.response** | Output DTOs | Response objects |
 | **service.general** | Cross-cutting | Health checks |
 | **service.kafka** | Kafka Integration | Message consumption, deserialization |
 | **service.order** | Business Logic | Processing, validation, state management |
+| **service.utils** | Utilities | Shipping cost calculation, orderId normalization |
 
 ---
 
