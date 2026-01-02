@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -51,33 +52,33 @@ public class OrderController {
     public ResponseEntity<Map<String, Object>> root() {
         logger.debug("Root endpoint accessed");
 
-        Map<String, Object> response = new HashMap<>();
+        Map<String, Object> response = new LinkedHashMap<>();
         response.put("service", "Order Service (Consumer)");
         response.put("timestamp", Instant.now().toString());
 
-        Map<String, Object> endpoints = new HashMap<>();
+        Map<String, Object> endpoints = new LinkedHashMap<>();
 
         // Health endpoints
         Map<String, Object> health = new HashMap<>();
-        health.put("live", new HashMap<String, Object>() {{
+        health.put("live", new LinkedHashMap<String, Object>() {{
             put("method", "GET");
             put("path", "/order-service/health/live");
             put("description", "Liveness probe");
         }});
-        health.put("ready", new HashMap<String, Object>() {{
+        health.put("ready", new LinkedHashMap<String, Object>() {{
             put("method", "GET");
             put("path", "/order-service/health/ready");
             put("description", "Readiness probe");
         }});
 
         // Order endpoints
-        Map<String, Object> orders = new HashMap<>();
-        orders.put("orderDetails", new HashMap<String, Object>() {{
+        Map<String, Object> orders = new LinkedHashMap<>();
+        orders.put("orderDetails", new LinkedHashMap<String, Object>() {{
             put("method", "POST");
             put("path", "/order-service/order-details");
             put("description", "Get order details");
         }});
-        orders.put("getAllOrdersFromTopic", new HashMap<String, Object>() {{
+        orders.put("getAllOrdersFromTopic", new LinkedHashMap<String, Object>() {{
             put("method", "POST");
             put("path", "/order-service/getAllOrdersFromTopic");
             put("description", "Get all order IDs from topic");
