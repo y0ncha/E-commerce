@@ -5,7 +5,7 @@ services:
     image: y0ncha/eda-consumer:2.0.0
     container_name: order-service
     ports:
-      - "8081:8081"
+      - "8082:8082"
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: general:29092
       SPRING_KAFKA_CONSUMER_GROUP_ID: order-service-group
@@ -15,7 +15,7 @@ services:
     networks:
       - ecommerce-network
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8081/order-service/health/live" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:8082/order-service/health/live" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -24,4 +24,3 @@ services:
 networks:
   ecommerce-network:
     driver: bridge
-
