@@ -49,22 +49,32 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleMalformedJson(HttpMessageNotReadableException ex, HttpServletRequest request) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(request, "Bad Request", "Invalid request body", null));
+        logger.warn("Malformed JSON received: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(request, "Bad Request", "Invalid request body. Ensure JSON is properly formatted.", null));
     }
 
     @ExceptionHandler(InvalidOrderIdException.class)
     public ResponseEntity<Map<String, Object>> handleInvalidOrderId(InvalidOrderIdException ex, HttpServletRequest request) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(request, "Bad Request", ex.getMessage(), null));
+        logger.warn("Invalid orderId format: {}", ex.getOrderId());
+        Map<String, Object> details = new HashMap<>();
+        details.put("orderId", ex.getOrderId());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(request, "Bad Request", ex.getMessage(), details));
     }
 
     @ExceptionHandler(OrderNotFoundException.class)
     public ResponseEntity<Map<String, Object>> handleOrderNotFound(OrderNotFoundException ex, HttpServletRequest request) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorBody(request, "Not Found", ex.getMessage(), null));
+        logger.info("Order not found: {}", ex.getOrderId());
+        Map<String, Object> details = new HashMap<>();
+        details.put("orderId", ex.getOrderId());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorBody(request, "Not Found", ex.getMessage(), details));
     }
 
     @ExceptionHandler(DuplicateOrderException.class)
     public ResponseEntity<Map<String, Object>> handleDuplicateOrder(DuplicateOrderException ex, HttpServletRequest request) {
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(errorBody(request, "Conflict", ex.getMessage(), null));
+        logger.warn("Duplicate order attempt: {}", ex.getOrderId());
+        Map<String, Object> details = new HashMap<>();
+        details.put("orderId", ex.getOrderId());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(errorBody(request, "Conflict", ex.getMessage(), details));
     }
 
     /**
@@ -104,9 +114,21 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
     }
 
+    /**
+     * Handle unknown endpoints (404 Not Found).
+     */
+    @ExceptionHandler(org.springframework.web.servlet.NoHandlerFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoHandlerFound(org.springframework.web.servlet.NoHandlerFoundException ex,
+                                                                    HttpServletRequest request) {
+        logger.info("Unknown endpoint: {} {}", ex.getHttpMethod(), ex.getRequestURL());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                errorBody(request, "Not Found", "Endpoint not found", null)
+        );
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleUnhandled(Exception ex, HttpServletRequest request) {
         logger.error("Unhandled error: {}", ex.getMessage(), ex);
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorBody(request, "Internal Server Error", "Internal server error", null));
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorBody(request, "Internal Server Error", "An unexpected error occurred. Please try again later.", null));
     }
 }

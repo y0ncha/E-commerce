@@ -39,23 +39,17 @@ public class OrderService {
             return;
         }
 
-        // Step 2: Sequencing check - prevent older status from overwriting newer one
-        // Status order: CREATED -> CONFIRMED -> DISPATCHED -> DELIVERED
-        if (current != null && !isValidTransition(current.order().status(), order.status())) {
-            logger.warn("Invalid transition: Order {} cannot move from {} to {}. Rejecting update.",
-                    orderId, current.order().status(), order.status());
-            return;
-        }
+        // Allow any status updates (no sequencing/transition validation)
+        // Previously we rejected out-of-order transitions; now we always accept and overwrite.
 
         // Step 3: Calculate shipping cost based on order items
         double shippingCost = calculateShippingCost(order);
 
         // Step 4: Update the local state with ProcessedOrder wrapper
-        // Only executed if the order is new or valid transition
         ProcessedOrder processedOrder = new ProcessedOrder(order, shippingCost);
         processedOrderStore.put(orderId, processedOrder);
 
-        String action = current == null ? "Created" : "Transitioned";
+        String action = current == null ? "Created" : "Updated";
         logger.info("{} order {}. Status: {} -> {} | Shipping Cost: ${}",
                 action, orderId,
                 current == null ? "NEW" : current.order().status(),
@@ -66,6 +60,7 @@ public class OrderService {
     /**
      * Get an order by its ID.
      * Normalizes the orderId with ORD- prefix before lookup.
+     *
      * @param rawOrderId the raw order ID (may or may not have ORD- prefix)
      * @return Optional containing the order if found
      */
@@ -78,36 +73,13 @@ public class OrderService {
     /**
      * Get a processed order (order and shipping cost) by its ID.
      * Normalizes the orderId with ORD- prefix before lookup.
+     *
      * @param rawOrderId the raw order ID (may or may not have ORD- prefix)
      * @return Optional containing the processed order if found
      */
     public Optional<ProcessedOrder> getProcessedOrder(String rawOrderId) {
         String normalizedOrderId = normalizeOrderId(rawOrderId);
         return Optional.ofNullable(processedOrderStore.get(normalizedOrderId));
-    }
-
-    /**
-     * Validate status transitions to prevent older events from overwriting newer states.
-     * Allowed transitions: CREATED -> CONFIRMED -> DISPATCHED -> DELIVERED
-     *
-     * @param currentStatus the current status
-     * @param newStatus the new status
-     * @return true if transition is valid, false otherwise
-     */
-    private boolean isValidTransition(String currentStatus, String newStatus) {
-        // If the same status, it's a duplicate (handled by equals check above)
-        if (currentStatus.equals(newStatus)) {
-            return true;
-        }
-
-        // Define valid transitions
-        return switch (currentStatus) {
-            case "CREATED" -> newStatus.equals("CONFIRMED") || newStatus.equals("DISPATCHED") || newStatus.equals("DELIVERED");
-            case "CONFIRMED" -> newStatus.equals("DISPATCHED") || newStatus.equals("DELIVERED");
-            case "DISPATCHED" -> newStatus.equals("DELIVERED");
-            case "DELIVERED" -> false; // No transitions from DELIVERED
-            default -> true; // Allow any transition for unknown statuses (defensive)
-        };
     }
 
     /**
@@ -144,6 +116,28 @@ public class OrderService {
                         e -> e.getValue().shippingCost()
                 ));
     }
+
+    /**
+     * Retrieve all order IDs received from a specific Kafka topic.
+     * Historical Tracking: Returns orders that were consumed from the specified topic.
+     * <p>
+     * Educational Note:
+     * This method demonstrates the historical tracking requirement from Exercise 2.
+     * Every order stores its source topic (from ConsumerRecord.topic()) at consumption time.
+     * This enables answering the question: "Which orders were received from topic X?"
+     * <p>
+     * At-Least-Once Integrity:
+     * - topicName is saved before calling acknowledgment.acknowledge()
+     * - If processing fails before acknowledgment, topicName is not saved
+     * - This maintains consistency: saved orders = successfully processed messages
+     *
+     * @param topicName the Kafka topic name to filter by
+     * @return list of order IDs received from that topic (order may vary)
+     */
+    public java.util.List<String> getOrdersByTopic(String topicName) {
+        return processedOrderStore.entrySet().stream()
+                .filter(entry -> topicName.equals(entry.getValue().order().topicName()))
+                .map(Map.Entry::getKey)
+                .toList();
+    }
 }
-
-

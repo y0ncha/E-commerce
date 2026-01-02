@@ -1,6 +1,7 @@
 package mta.eda.consumer.controller;
 
-import jakarta.validation.Valid;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
 import mta.eda.consumer.exception.InvalidOrderIdException;
 import mta.eda.consumer.exception.OrderNotFoundException;
 import mta.eda.consumer.model.order.ProcessedOrder;
@@ -14,17 +15,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import static mta.eda.consumer.service.util.OrderUtils.normalizeOrderId;
 
 /**
  * OrderController
@@ -38,10 +39,12 @@ public class OrderController {
 
     private final OrderService orderService;
     private final HealthService healthService;
+    private final Validator validator;
 
-    public OrderController(OrderService orderService, HealthService healthService) {
+    public OrderController(OrderService orderService, HealthService healthService, Validator validator) {
         this.orderService = orderService;
         this.healthService = healthService;
+        this.validator = validator;
     }
 
     /**
@@ -74,13 +77,13 @@ public class OrderController {
         // Order endpoints
         Map<String, Object> orders = new LinkedHashMap<>();
         orders.put("orderDetails", new LinkedHashMap<String, Object>() {{
-            put("method", "POST");
-            put("path", "/order-service/order-details");
+            put("method", "GET");
+            put("path", "/order-service/order-details?orderId=001");
             put("description", "Get order details");
         }});
         orders.put("getAllOrdersFromTopic", new LinkedHashMap<String, Object>() {{
-            put("method", "POST");
-            put("path", "/order-service/getAllOrdersFromTopic");
+            put("method", "GET");
+            put("path", "/order-service/getAllOrdersFromTopic?topicName=orders");
             put("description", "Get all order IDs from topic");
         }});
 
@@ -122,8 +125,9 @@ public class OrderController {
         HealthCheck kafkaStatus = healthService.getKafkaStatus();
         HealthCheck stateStatus = healthService.getLocalStateStatus();
 
-        boolean isKafkaUp = "UP".equals(kafkaStatus.status());
-        String overallStatus = isKafkaUp ? "UP" : "DOWN";
+        // Core readiness is determined by the service itself and local state store.
+        // Kafka may be temporarily unavailable, but the HTTP API can still serve requests.
+        boolean coreUp = "UP".equals(serviceStatus.status()) && "UP".equals(stateStatus.status());
 
         Map<String, HealthCheck> checks = Map.of(
             "service", serviceStatus,
@@ -134,40 +138,57 @@ public class OrderController {
         HealthResponse response = new HealthResponse(
             "Order Service (Consumer)",
             "readiness",
-            overallStatus,
+            coreUp ? "UP" : "DOWN",
             Instant.now().toString(),
             checks
         );
 
-        HttpStatus httpStatus = isKafkaUp ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE;
+        // Keep HTTP 200 when core is healthy, even if Kafka is DOWN (degraded but usable).
+        HttpStatus httpStatus = coreUp ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE;
         return ResponseEntity.status(httpStatus).body(response);
     }
 
     /**
      * Get order details by orderId.
-     *
-     * @param request OrderDetailsRequest containing orderId (hex format validation)
+     * Uses OrderDetailsRequest DTO for validation (see model.request package).
+     * Validation Rules (from OrderDetailsRequest):
+     * ├─ orderId is required (not null/blank)
+     * └─ orderId must be hexadecimal format (0-9, A-F)
+     * @param orderId the order ID (query parameter)
      * @return Order details with calculated shipping cost
-     * @throws OrderNotFoundException if order is not found
      * @throws InvalidOrderIdException if orderId format is invalid
+     * @throws OrderNotFoundException if order is not found
      */
-    @PostMapping("/order-details")
-    public ResponseEntity<Map<String, Object>> getOrderDetails(@Valid @RequestBody OrderDetailsRequest request) {
-        String rawOrderId = request.orderId();
-        logger.info("Received order details request: orderId={}", rawOrderId);
+    @GetMapping("/order-details")
+    public ResponseEntity<Map<String, Object>> getOrderDetails(
+            @RequestParam(required = false) String orderId) {
 
+        // Create DTO from query parameter for validation
+        OrderDetailsRequest request = new OrderDetailsRequest(orderId);
+
+        // Validate using the DTO's constraint annotations
+        Set<ConstraintViolation<OrderDetailsRequest>> violations = validator.validate(request);
+        if (!violations.isEmpty()) {
+            String errorMessage = violations.stream()
+                    .map(ConstraintViolation::getMessage)
+                    .collect(Collectors.joining("; "));
+            logger.warn("Validation failed for order-details: {}", errorMessage);
+            throw new InvalidOrderIdException(orderId != null ? orderId : "null", errorMessage);
+        }
+
+        logger.info("Received order details request: orderId={}", orderId);
         try {
-            // Query the order service (normalizeOrderId is called internally)
-            Optional<ProcessedOrder> processedOrder = orderService.getProcessedOrder(rawOrderId);
+            String normalizedOrderId = normalizeOrderId(orderId);
+            Optional<ProcessedOrder> processedOrder = orderService.getProcessedOrder(normalizedOrderId);
 
             if (processedOrder.isEmpty()) {
-                logger.warn("Order not found: orderId={}", rawOrderId);
-                throw new OrderNotFoundException(rawOrderId);
+                logger.warn("Order not found: orderId={}", normalizedOrderId);
+                throw new OrderNotFoundException(orderId);
             }
 
             ProcessedOrder order = processedOrder.get();
             logger.info("Order found: orderId={}, status={}, shippingCost={}",
-                rawOrderId, order.order().status(), String.format("%.2f", order.shippingCost()));
+                    normalizedOrderId, order.order().status(), String.format("%.2f", order.shippingCost()));
 
             Map<String, Object> response = new HashMap<>();
             response.put("orderId", order.order().orderId());
@@ -182,33 +203,80 @@ public class OrderController {
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
             // Thrown by normalizeOrderId for invalid hex format
-            throw new InvalidOrderIdException(rawOrderId, e.getMessage());
+            throw new InvalidOrderIdException(orderId, e.getMessage());
         }
     }
 
     /**
-     * Get all order IDs from a specific Kafka topic.
-     * Diagnostic endpoint for Exercise 2 requirements.
-     *
-     * @param request AllOrdersFromTopicRequest containing topic name
-     * @return List of all processed order IDs from that topic
+     * Get all order IDs received from a specific Kafka topic.
+     * Uses AllOrdersFromTopicRequest DTO for validation (see model.request package).
+     * Historical Tracking:
+     * - Returns all orders that were consumed from the specified topic
+     * - Each order saves its source topic at consumption time (from ConsumerRecord.topic())
+     * - This endpoint queries the local state store for orders matching that topic
+     * Validation Rules (from AllOrdersFromTopicRequest):
+     * └─ topicName is required (not null/blank)
+     * @param topicName the Kafka topic name to query (query parameter)
+     * @return List of all processed order IDs received from that topic
      */
-    @PostMapping("/getAllOrdersFromTopic")
+    @GetMapping("/getAllOrdersFromTopic")
     public ResponseEntity<Map<String, Object>> getAllOrdersFromTopic(
-            @Valid @RequestBody AllOrdersFromTopicRequest request) {
-        String topicName = request.topicName();
+            @RequestParam(required = false) String topicName) {
+
+        // Create DTO from query parameter for validation
+        AllOrdersFromTopicRequest request = new AllOrdersFromTopicRequest(topicName);
+
+        // Validate using the DTO's constraint annotations
+        Set<ConstraintViolation<AllOrdersFromTopicRequest>> violations = validator.validate(request);
+        if (!violations.isEmpty()) {
+            String errorMessage = violations.stream()
+                    .map(ConstraintViolation::getMessage)
+                    .collect(Collectors.joining("; "));
+            logger.warn("Validation failed for getAllOrdersFromTopic: {}", errorMessage);
+            throw new InvalidOrderIdException(topicName != null ? topicName : "null", errorMessage);
+        }
+
         logger.info("Received request for all orders from topic: {}", topicName);
 
-        // Get all order IDs
-        java.util.List<String> orderIds = orderService.getAllOrders().keySet().stream().toList();
+        // Query local storage for orders received from this topic
+        java.util.List<String> orderIds = orderService.getOrdersByTopic(topicName).stream()
+                .map(id -> {
+                    try {
+                        return normalizeOrderId(id);
+                    } catch (IllegalArgumentException ex) {
+                        return id;
+                    }
+                })
+                .toList();
 
-        logger.info("Found {} orders in topic '{}'", orderIds.size(), topicName);
+        logger.info("Found {} orders from topic '{}'", orderIds.size(), topicName);
 
         Map<String, Object> response = new HashMap<>();
         response.put("topic", topicName);
         response.put("orderCount", orderIds.size());
         response.put("orderIds", orderIds);
-        response.put("timestamp", System.currentTimeMillis());
+        response.put("timestamp", Instant.now().toString());
+
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Debug endpoint - Get all stored order IDs.
+     * Useful for troubleshooting: shows all orders the consumer has processed.
+     * @return List of all order IDs in local storage
+     */
+    @GetMapping("/debug/all-orders")
+    public ResponseEntity<Map<String, Object>> getAllStoredOrders() {
+        logger.info("Debug: Fetching all stored orders");
+
+        Map<String, ProcessedOrder> allOrders = orderService.getAllProcessedOrders();
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("totalOrders", allOrders.size());
+        response.put("orderIds", allOrders.keySet());
+        response.put("timestamp", Instant.now().toString());
+
+        logger.info("Debug: Found {} total orders in storage", allOrders.size());
 
         return ResponseEntity.ok(response);
     }

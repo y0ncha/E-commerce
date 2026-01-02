@@ -1,15 +1,24 @@
-# Postman Sanity Test Suite for Exercise 2
+# Postman Test Collections for Exercise 2
 
-This directory contains an automated sanity test suite for verifying the resilience and sequencing standards of Exercise 2 (Kafka E-commerce Backend).
+This directory contains automated test suites for verifying the resilience, sequencing, and at-least-once delivery standards of Exercise 2 (Kafka E-commerce Backend).
 
 ## Files
 
+### Collections
+- **`Sanity.postman_collection.json`** - End-to-end flow testing (producer + consumer)
+- **`Consumer-Endpoints.postman_collection.json`** - **NEW** Comprehensive consumer endpoint tests with validation
+- **`collections/Ex02-Sequencing.postman_collection.json`** - Sequencing guarantee tests
+- **`collections/Ex02-Resilience-and-Idempotency.postman_collection.json`** - Resilience pattern tests
+- **`collections/Ex02-Validation.postman_collection.json`** - Data validation tests
+
+### Configuration
 - **`EDA-Local.postman_environment.json`** - Environment configuration for local testing
-- **`Sanity.postman_collection.json`** - Automated test collection with 7 requests
+- **`environments/EDA-Local.postman_environment.json`** - (Alternative location)
 
 ## Test Coverage
 
-The suite verifies the complete end-to-end flow from order creation in the Cart Service (Producer) to state mirroring and shipping calculation in the Order Service (Consumer):
+### Sanity Collection (End-to-End Flow)
+Verifies the complete flow from order creation to consumer processing:
 
 1. **Health Check (Consumer)** - Verifies Kafka connectivity is UP
 2. **Create Order (Producer)** - Creates a new order with auto-generated hex OrderID
@@ -17,7 +26,67 @@ The suite verifies the complete end-to-end flow from order creation in the Cart 
 4. **Update Order Status (Producer)** - Updates order to DISPATCHED status
 5. **Verify Sequential Update (Consumer)** - Confirms Consumer reflected DISPATCHED status
 6. **Resilience - Invalid Transition** - Attempts backward transition (DISPATCHED → CREATED) and verifies Consumer ignores it
-7. **Diagnostic Check (Consumer)** - Confirms OrderID exists in the Kafka topic
+7. **Diagnostic Check (Consumer)** - Confirms OrderID exists in the Kafka topic (**NOW USES GET** ✅)
+
+### Consumer-Endpoints Collection (NEW - Detailed Testing)
+Comprehensive testing of all consumer endpoints with validation scripts:
+
+**Health & Status:**
+- Root Endpoint - API metadata and documentation
+- Liveness Probe - Service availability
+- Readiness Probe - Kafka connectivity status
+
+**Order Operations (NOW USING GET - NOT POST ✅):**
+- Get Order Details - Retrieves order by ID with full validation
+- Get All Orders From Topic - Lists all orders from Kafka topic with validation
+
+**Integration Tests:**
+- Test Flow sequence for end-to-end scenarios
+
+## HTTP Method Changes (Exercise 2)
+
+### Before
+```
+POST /order-details with JSON body {"orderId": "001"}
+POST /getAllOrdersFromTopic with JSON body {"topicName": "orders"}
+```
+
+### After (✅ Correct REST Semantics)
+```
+GET /order-details?orderId=001
+GET /getAllOrdersFromTopic?topicName=orders
+```
+
+**Reason**: These are read-only operations. GET is semantically correct for safe, idempotent queries.
+
+## Validation Scripts
+
+All endpoints include comprehensive Postman test scripts that validate:
+
+### getOrderDetails Tests
+- ✅ Status code is 200
+- ✅ All required order fields present
+- ✅ Order ID matches request parameter
+- ✅ Status is valid (CREATED|CONFIRMED|DISPATCHED|DELIVERED)
+- ✅ Shipping cost is numeric and non-negative
+- ✅ Order has items
+- ✅ Total amount is positive
+- ✅ Currency is USD
+
+### getAllOrdersFromTopic Tests
+- ✅ Status code is 200
+- ✅ Response has required fields (topic, orderCount, orderIds, timestamp)
+- ✅ Topic name matches request parameter
+- ✅ Order count matches array length
+- ✅ orderIds is an array
+- ✅ Timestamp is numeric
+- ✅ All order IDs have ORD- prefix
+
+### Root Endpoint Tests
+- ✅ Service metadata is correct
+- ✅ Endpoints are documented
+- ✅ Health endpoints use GET
+- ✅ Order endpoints use GET (not POST)
 
 ## Prerequisites
 
@@ -44,11 +113,45 @@ docker-compose up -d
 1. Open Postman
 2. Import the environment:
    - Click "Import" → Select `EDA-Local.postman_environment.json`
-3. Import the collection:
-   - Click "Import" → Select `Sanity.postman_collection.json`
+3. Import collection(s):
+   - Click "Import" → Select `Sanity.postman_collection.json` (end-to-end)
+   - OR Select `Consumer-Endpoints.postman_collection.json` (detailed consumer tests)
 4. Select "EDA-Local" environment from the dropdown (top-right)
 5. Run the collection:
-   - Open "Sanity" collection
+   - Click "Run" button
+   - OR Select individual requests and send them
+
+### Option 2: Postman CLI (newman)
+
+```bash
+# Install newman
+npm install -g newman
+
+# Run Sanity collection
+newman run Sanity.postman_collection.json \
+  -e EDA-Local.postman_environment.json \
+  --reporters cli,json \
+  --reporter-json-export results.json
+
+# Run Consumer endpoints collection
+newman run Consumer-Endpoints.postman_collection.json \
+  -e EDA-Local.postman_environment.json \
+  --reporters cli,json
+```
+
+### Option 3: Command Line (curl)
+
+```bash
+# Get order details
+curl "http://localhost:8082/order-service/order-details?orderId=001"
+
+# Get all orders from topic
+curl "http://localhost:8082/order-service/getAllOrdersFromTopic?topicName=orders"
+
+# Check readiness
+curl "http://localhost:8082/order-service/health/ready"
+```
+
    - Click "Run" button
    - Click "Run Sanity" to execute all tests
 

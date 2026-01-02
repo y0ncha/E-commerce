@@ -83,7 +83,6 @@ public class GlobalExceptionHandler {
         logger.warn("Invalid orderId format: {}", ex.getOrderId());
         Map<String, Object> details = new HashMap<>();
         details.put("orderId", ex.getOrderId());
-        details.put("reason", "Must be in hexadecimal format (0-9, A-F)");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
             errorBody(request, "Bad Request", ex.getMessage(), details)
         );
@@ -114,6 +113,18 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handle unknown endpoints (404 Not Found).
+     */
+    @ExceptionHandler(org.springframework.web.servlet.NoHandlerFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoHandlerFound(org.springframework.web.servlet.NoHandlerFoundException ex,
+                                                                    HttpServletRequest request) {
+        logger.info("Unknown endpoint: {} {}", ex.getHttpMethod(), ex.getRequestURL());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                errorBody(request, "Not Found", "Endpoint not found", null)
+        );
+    }
+
+    /**
      * Handle all unhandled exceptions.
      */
     @ExceptionHandler(Exception.class)
@@ -124,4 +135,3 @@ public class GlobalExceptionHandler {
         );
     }
 }
-

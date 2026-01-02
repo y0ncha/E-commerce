@@ -9,5 +9,6 @@ public record Order(
         List<OrderItem> items,
         double totalAmount,
         String currency,
-        String status
+        String status,
+        String topicName  // Topic this message was received from
 ) {}
