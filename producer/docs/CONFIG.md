@@ -8,7 +8,7 @@ Complete reference for all configuration properties in the Producer (Cart Servic
 
 ### Server
 - `spring.application.name=producer`
-- `server.port=8080`
+- `server.port=8081` - Producer API port (Cart Service)
 
 ### Logging
 - `logging.level.root=INFO` - Default log level
@@ -25,8 +25,9 @@ Complete reference for all configuration properties in the Producer (Cart Servic
 ### Bootstrap Servers
 - `spring.kafka.bootstrap-servers=${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}`
   - **Default:** `localhost:9092` (local development)
-  - **Docker:** Set `KAFKA_BOOTSTRAP_SERVERS=kafka:9092` via environment variable
+  - **Docker:** Set `KAFKA_BOOTSTRAP_SERVERS=kafka:29092` via environment variable
   - **Purpose:** Initial connection to Kafka cluster
+  - **Network:** Kafka runs on `producer_ecommerce-network` bridge network
 
 ### Admin Client
 - `spring.kafka.admin.fail-fast=false` - Don't crash app if Kafka is down on startup
@@ -226,6 +227,35 @@ KAFKA_BOOTSTRAP_SERVERS=general:9092
 - `src/main/java/mta/eda/producer/service/kafka/KafkaProducerService.java` - Message publishing
 - `src/main/java/mta/eda/producer/service/kafka/KafkaHealthService.java` - Health checks
 - `src/main/java/mta/eda/producer/controller/OrderController.java` - REST endpoints
+
+---
+
+## Docker Deployment
+
+### Network Configuration
+- **Network Name**: `producer_ecommerce-network`
+- **Type**: Bridge network
+- **Purpose**: Shared network for Zookeeper, Kafka, and Cart Service
+- **Consumer Access**: Consumer can join this network to access Kafka
+
+### Service Ports
+- **Kafka External**: `9092` (host machine access)
+- **Kafka Internal**: `29092` (Docker network access)
+- **Cart Service**: `8081` (Producer API)
+
+### Kafka Advertised Listeners
+```yaml
+KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+```
+- `kafka:29092` - For services within Docker network (Consumer uses this)
+- `localhost:9092` - For host machine access (development/testing)
+
+### Environment Variables (docker-compose.yml)
+- `SPRING_PROFILES_ACTIVE=docker` - Activates Docker profile
+- `KAFKA_BOOTSTRAP_SERVERS=kafka:29092` - Connect via internal network
+- `KAFKA_TOPIC=orders` - Default topic name
+- `LOGGING_LEVEL_ROOT=INFO` - Root logging level
+- `LOGGING_LEVEL_MTA_EDA_PRODUCER=DEBUG` - Application debug logs
 
 ---
 

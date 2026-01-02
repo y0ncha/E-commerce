@@ -75,7 +75,7 @@ REST API endpoints for order operations and health checks.
 
 **HealthService Methods:**
 - `getServiceStatus()` → Returns service health (always UP if callable)
-- `getKafkaStatus()` → Returns Kafka broker connectivity status
+- `getKafkaStatus()` → Uses Kafka AdminClient to verify broker connectivity (3s timeout)
 - `getLocalStateStatus()` → Returns local state store accessibility status
 
 **See:** [CONFIG.md](CONFIG.md) for detailed endpoint configurations
@@ -101,29 +101,52 @@ Set up lightweight Docker Compose configuration and multi-stage Dockerfile.
 
 - [x] Create lightweight docker-compose.yml (consumer only)
 - [x] Create multi-stage Dockerfile (Maven builder + JRE runtime)
-- [x] Configure shared ecommerce-network
+- [x] Configure autoStartup=false for standalone mode support
 - [x] Set hard-coded environment variables
 - [x] Configure health checks with start_period
 - [x] Align producer and consumer docker-compose files
 - [x] Configure logging in both services
+- [x] Enable Consumer to run with or without Kafka
 
 **Architecture:**
 ```
 Producer (docker-compose)  ← Manages: Kafka, Zookeeper, Producer
-                             Network: ecommerce-network
+                             Network: producer_ecommerce-network
+                             Port: 8081
                              
 Consumer (docker-compose)  ← Manages: Consumer only
-                             Network: ecommerce-network (shared)
+                             Network: Standalone or producer_ecommerce-network
+                             Port: 8082
+                             Mode: Standalone OR Integrated
 ```
 
 **Running the Stack:**
-```bash
-# Start Producer (Kafka + Zookeeper included)
-cd ../producer && docker-compose up -d
 
-# Start Consumer
-cd ../consumer && docker-compose up -d
+**Standalone Mode (Consumer without Kafka):**
+```bash
+cd consumer && docker compose up
+# Consumer runs on port 8082, Kafka health shows DOWN
 ```
+
+**Integrated Mode (Consumer with Producer's Kafka):**
+```bash
+# Step 1: Start Producer
+cd producer && docker compose up -d
+
+# Step 2: Start Consumer
+cd consumer && docker compose up -d
+
+# Step 3: Connect Consumer to Producer's network
+docker network connect producer_ecommerce-network order-service
+
+# Step 4: Restart Consumer
+docker restart order-service
+```
+
+**Key Configuration:**
+- `autoStartup=false` in KafkaConsumerConfig allows standalone operation
+- HealthService uses AdminClient for actual Kafka connectivity verification
+- Consumer starts successfully even when Kafka is unavailable
 
 **See:** [CONFIG.md](CONFIG.md) for environment variables and configuration details
 

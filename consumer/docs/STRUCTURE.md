@@ -34,9 +34,6 @@ consumer/
 │       ├── general/
 │       │   └── HealthService.java            # Health check operations (service, Kafka, state)
 │       │
-│       ├── kafka/
-│       │   └── KafkaConsumerService.java     # Kafka listener (@KafkaListener)
-│       │
 │       ├── order/
 │       │   └── OrderService.java             # Order processing logic (idempotency, sequencing, shipping)
 │       │
@@ -68,6 +65,7 @@ consumer/
 - Configures `ConsumerFactory` with StringDeserializers
 - Sets up `ConcurrentKafkaListenerContainerFactory`
 - Enables **MANUAL_IMMEDIATE** acknowledgment mode
+- **autoStartup=false** - Allows Consumer to run without Kafka (standalone mode)
 - Provides `ObjectMapper` bean for JSON deserialization
 
 ### **exception/GlobalExceptionHandler.java**
@@ -155,24 +153,24 @@ public record HealthResponse(
 
 ### **service/general/HealthService.java**
 Health check service with three methods:
-- `getServiceStatus()` - Service responsiveness
-- `getKafkaStatus()` - Kafka broker connectivity
+- `getServiceStatus()` - Service responsiveness (always UP if callable)
+- `getKafkaStatus()` - Kafka broker connectivity via AdminClient (actual connection test)
 - `getLocalStateStatus()` - Local state store accessibility
 
-### **service/kafka/KafkaConsumerService.java**
-Message listener with full error handling:
-- `@KafkaListener(topics = "${kafka.consumer.topic}", ...)`
-- JSON deserialization with `ObjectMapper`
-- Message key validation
-- Manual acknowledgment after successful processing
+**Key Feature:** Uses Kafka AdminClient to verify broker connectivity with 3-second timeout
 
 ### **service/order/OrderService.java**
 Core event processing logic:
 - **Idempotency Check** - Detects duplicate events
 - **Sequencing Validation** - Enforces state machine (CREATED → CONFIRMED → DISPATCHED → DELIVERED)
-- **Shipping Cost Calculation** - Business logic: $5 + ($0.50 × items) + (2% × total)
+- **Shipping Cost Calculation** - Business logic: 2% of total amount
 - **State Management** - Maintains `processedOrderStore` map
 - **Error Handling** - Logs invalid transitions
+
+### **service/utils/OrderUtils.java**
+Utility methods for order processing:
+- `calculateShippingCost(Order)` - Returns 2% of order total amount
+- `normalizeOrderId(String)` - Adds ORD- prefix and pads to 4 hex digits
 
 ---
 
@@ -180,14 +178,13 @@ Core event processing logic:
 
 | Package | Purpose | Responsibility |
 |---------|---------|-----------------|
-| **config** | Configuration | Bean setup, Kafka factory |
+| **config** | Configuration | Bean setup, Kafka factory, autoStartup control |
 | **controller** | API Layer | HTTP endpoints, request/response handling |
 | **exception** | Error Handling | GlobalExceptionHandler, custom exceptions |
 | **model.order** | Domain Objects | Order entities (records) |
 | **model.request** | Input DTOs | Request validation |
 | **model.response** | Output DTOs | Response objects |
-| **service.general** | Cross-cutting | Health checks |
-| **service.kafka** | Kafka Integration | Message consumption, deserialization |
+| **service.general** | Cross-cutting | Health checks with actual Kafka connectivity test |
 | **service.order** | Business Logic | Processing, validation, state management |
 | **service.utils** | Utilities | Shipping cost calculation, orderId normalization |
 

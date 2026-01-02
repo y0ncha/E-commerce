@@ -96,14 +96,14 @@ These mechanisms prevent duplicate processing and enforce valid state transition
 - **API Impact**: The rejected order state is preserved; queries return the last valid state.
 
 ### Level 3: Business Logic Processing (Shipping Cost Calculation)
-- **Mechanism**: `OrderService.calculateShippingCost()` computes the shipping cost based on order items.
+- **Mechanism**: `OrderUtils.calculateShippingCost()` computes the shipping cost based on order total.
 - **Formula**:
   ```
-  Shipping Cost = Base Cost ($5) + Item Cost ($0.50 per item) + Percentage Cost (2% of total amount)
+  Shipping Cost = 2% of total amount
   ```
 - **Error Handling**: 
-  - Invalid/missing order items are safely handled by the stream operation; if items list is null or empty, `itemCount = 0` (no exception).
   - Negative or zero total amounts are processed as-is (no validation error; the order comes from the trusted producer).
+  - Calculation is a simple multiplication with no external dependencies.
 - **Rationale**: This is deterministic logic; the same order always produces the same shipping cost. No external dependencies mean no transient failures here.
 
 ---

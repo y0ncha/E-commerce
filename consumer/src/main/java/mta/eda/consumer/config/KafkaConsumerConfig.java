@@ -46,6 +46,8 @@ public class KafkaConsumerConfig {
     /**
      * KafkaListenerContainerFactory: Configures the listener container with manual acknowledgment.
      * This ensures At-Least-Once delivery semantics.
+     * NOTE: autoStartup=false allows the Consumer to run independently without Kafka.
+     * The listener container will only start when Kafka becomes available or is explicitly started.
      */
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory() {
@@ -55,6 +57,9 @@ public class KafkaConsumerConfig {
 
         // MANDATORY: Set AckMode to MANUAL_IMMEDIATE for precise control
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+
+        // Allow Consumer to run without Kafka - listeners won't auto-start if broker is unavailable
+        factory.setAutoStartup(false);
 
         return factory;
     }

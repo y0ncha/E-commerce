@@ -19,11 +19,11 @@ Configuration values follow the precedence: **Command-line → Environment Varia
 
 ### Server Configuration
 
-#### `server.port=8081`
+#### `server.port=8082`
 - **Purpose**: HTTP port for the consumer service
-- **Default**: `8081`
-- **Why This Value**: Avoids conflict with producer (8080) and common ports
-- **Override**: `SERVER_PORT=8082 docker-compose up -d`
+- **Default**: `8082`
+- **Why This Value**: Avoids conflict with producer (8081) and common ports
+- **Override**: `SERVER_PORT=8083 docker-compose up -d`
 
 #### `spring.application.name=order-service`
 - **Purpose**: Internal application identifier
@@ -466,6 +466,64 @@ When modifying configuration:
 - **Increase**: `LOGGING_LEVEL_MTA_EDA_CONSUMER=TRACE`
 - **Decrease**: `LOGGING_LEVEL_ROOT=WARN`
 - **Target Package**: `LOGGING_LEVEL_mta_eda_consumer_service_order=DEBUG`
+
+------
+
+## Docker Deployment
+
+### Deployment Modes
+
+#### Standalone Mode (Without Kafka)
+```bash
+docker compose up
+```
+- **Purpose**: Testing Consumer API independently
+- **Network**: Creates `consumer_default` network
+- **Kafka Connection**: Fails gracefully (autoStartup=false)
+- **Health Check**: Shows Kafka as DOWN
+- **API**: Fully functional on port 8082
+- **Message Consumption**: Disabled
+
+#### Integrated Mode (With Producer's Kafka)
+```bash
+# Step 1: Start Producer
+cd ../producer && docker compose up -d
+
+# Step 2: Start Consumer
+cd ../consumer && docker compose up -d
+
+# Step 3: Connect Consumer to Producer's network
+docker network connect producer_ecommerce-network order-service
+
+# Step 4: Restart Consumer
+docker restart order-service
+```
+- **Network**: Joins `producer_ecommerce-network`
+- **Kafka Connection**: Resolves `kafka:29092` via Docker DNS
+- **Health Check**: Shows Kafka as UP
+- **Message Consumption**: Enabled
+
+### Network Configuration
+- **Standalone**: Uses default Docker network
+- **Integrated**: Connects to `producer_ecommerce-network`
+- **Kafka Service Name**: `kafka` (resolves to Kafka broker in Producer network)
+- **Kafka Port**: `29092` (internal Docker network port)
+
+### Service Ports
+- **Order Service**: `8082` (Consumer API)
+
+### Environment Variables (docker-compose.yml)
+- `SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092` - Connect via Producer's network
+- `SPRING_KAFKA_CONSUMER_GROUP_ID=order-service-group` - Consumer group ID
+- `KAFKA_TOPIC=orders` - Topic to consume from
+- `LOGGING_LEVEL_ROOT=INFO` - Root logging level
+- `LOGGING_LEVEL_MTA_EDA_CONSUMER=DEBUG` - Application debug logs
+
+### Kafka Listener Behavior
+- **autoStartup=false** in KafkaConsumerConfig allows Consumer to start without Kafka
+- Listeners remain inactive until Kafka connection is established
+- No crashes or exceptions when Kafka is unavailable
+- Enables independent testing and deployment
 
 ---
 
