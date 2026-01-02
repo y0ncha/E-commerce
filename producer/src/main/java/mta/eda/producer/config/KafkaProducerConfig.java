@@ -60,7 +60,7 @@ public class KafkaProducerConfig {
     @Value("${spring.kafka.producer.properties.enable.idempotence:false}")
     private boolean enableIdempotence;
 
-    @Value("${spring.kafka.producer.client-id:eda-producer}")
+    @Value("${spring.general.producer.client-id:eda-producer}")
     private String clientId;
 
     /**

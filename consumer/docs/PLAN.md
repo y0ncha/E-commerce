@@ -54,27 +54,41 @@ CREATED → CONFIRMED → DISPATCHED → DELIVERED
 
 ---
 
-## ⏳ Phase 3: API Endpoint Implementation
-Expose REST endpoints to query the consumer's aggregated order state.
+## ✅ Phase 3: API Endpoint Implementation
+REST API endpoints for order operations and health checks.
 
-- [ ] Implement `GET /order-details/{orderId}` endpoint
-- [ ] Implement `GET /getAllOrderIds` endpoint
-- [ ] Add 404 error handling for missing orders
-- [ ] Add health check endpoints
+- [x] Implement root endpoint (GET /)
+- [x] Implement liveness probe (GET /health/live)
+- [x] Implement readiness probe (GET /health/ready)
+- [x] Implement `POST /order-details` endpoint with orderId validation
+- [x] Implement `POST /getAllOrdersFromTopic` endpoint
+- [x] Create HealthService for health check operations
+- [x] Add 404 error handling for missing orders
+- [x] Add 503 Service Unavailable for broker outages
 
-**Endpoints:**
-- `GET /order-details/{orderId}` → Returns order with shipping cost
-- `GET /getAllOrderIds` → Returns list of all processed order IDs
-- `GET /actuator/health` → Health check (already configured)
+**Endpoints Implemented:**
+- `GET /order-service/` → Root metadata with structured endpoints
+- `GET /order-service/health/live` → Liveness probe (service check)
+- `GET /order-service/health/ready` → Readiness probe (service + Kafka + state checks)
+- `POST /order-service/order-details` → Get order details with shipping cost
+- `POST /order-service/getAllOrdersFromTopic` → Get all order IDs from topic
+
+**HealthService Methods:**
+- `getServiceStatus()` → Returns service health (always UP if callable)
+- `getKafkaStatus()` → Returns Kafka broker connectivity status
+- `getLocalStateStatus()` → Returns local state store accessibility status
+
+**See:** [CONFIG.md](CONFIG.md) for detailed endpoint configurations
 
 ---
 
 ## ⏳ Phase 4: Resilience & Error Handling
 Implement robust error handling for production readiness.
 
-- [ ] Implement KafkaHealthService for broker monitoring
-- [ ] Add 503 Service Unavailable response for broker outages
-- [ ] Verify poison pill handling works correctly
+- [x] Implement HealthService for broker monitoring
+- [x] Add 503 Service Unavailable response for broker outages
+- [x] Implement poison pill handling (malformed JSON)
+- [x] Add comprehensive logging at key operations
 - [ ] Test graceful shutdown behavior
 - [ ] Add circuit breaker pattern (optional)
 

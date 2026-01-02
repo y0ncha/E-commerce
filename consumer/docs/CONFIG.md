@@ -219,7 +219,7 @@ Configuration values follow the precedence: **Command-line → Environment Varia
 
 ### Log Format (Spring Boot Default)
 ```
-2026-01-02 12:00:00.000 INFO  [order-service] mta.eda.consumer.service.kafka.KafkaConsumerService
+2026-01-02 12:00:00.000 INFO  [order-service] mta.eda.consumer.service.general.KafkaConsumerService
 ```
 
 ---
@@ -235,7 +235,7 @@ logging.level.root → LOGGING_LEVEL_ROOT
 ### docker-compose.yml Environment Section
 ```yaml
 environment:
-  SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: general:29092
   SPRING_KAFKA_CONSUMER_GROUP_ID: order-service-group
   KAFKA_TOPIC: ${KAFKA_TOPIC:-orders}
   SERVER_PORT: 8081
@@ -249,7 +249,7 @@ environment:
 KAFKA_TOPIC=orders
 
 # Kafka broker address
-SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+SPRING_KAFKA_BOOTSTRAP_SERVERS=general:29092
 
 # Consumer group
 SPRING_KAFKA_CONSUMER_GROUP_ID=order-service-group
@@ -321,18 +321,114 @@ healthcheck:
 
 ---
 
-## Summary Table
+## HealthService Configuration
 
-| Property | Default | Type | Overrideable | Critical |
-|----------|---------|------|--------------|----------|
-| `server.port` | `8081` | int | YES | NO |
-| `spring.kafka.bootstrap-servers` | `kafka:29092` | string | YES | YES |
-| `spring.kafka.consumer.group-id` | `order-service-group` | string | YES | NO |
-| `spring.kafka.consumer.auto-offset-reset` | `earliest` | enum | NO | YES |
-| `spring.kafka.consumer.enable-auto-commit` | `false` | boolean | NO | YES |
-| `kafka.consumer.topic` | `orders` | string | YES (env var) | NO |
-| `logging.level.root` | `INFO` | enum | YES | NO |
-| `logging.level.mta.eda.consumer` | `DEBUG` | enum | YES | NO |
+### Service Health Check
+The `HealthService.getServiceStatus()` method checks if the Order Service is responsive.
+
+- **Implementation**: Method invocation test - if callable, returns UP
+- **Response**: `HealthCheck("UP", "Order Service is running and responsive")`
+- **Failure**: `HealthCheck("DOWN", "Order Service is not responding: ...")`
+- **Used By**: Both liveness and readiness probes
+
+### Kafka Broker Health Check
+The `HealthService.getKafkaStatus()` method verifies Kafka broker connectivity.
+
+- **Implementation**: Attempts to access `KafkaTemplate` configured with Kafka broker
+- **Response on Success**: `HealthCheck("UP", "Kafka broker is accessible")`
+- **Response on Failure**: `HealthCheck("DOWN", "Kafka broker is unavailable: ...")`
+- **Bootstrap Server**: Retrieved from `spring.kafka.bootstrap-servers` (kafka:29092 in Docker)
+- **Used By**: Readiness probe only
+- **Impact**: If DOWN, readiness probe returns 503 Service Unavailable
+
+### Local State Store Health Check
+The `HealthService.getLocalStateStatus()` method verifies the in-memory order state store.
+
+- **Implementation**: Tests access to `ConcurrentHashMap<String, ProcessedOrder>`
+- **Response**: `HealthCheck("UP", "Local order state store is accessible")`
+- **Failure**: `HealthCheck("DOWN", "Local state store is unavailable: ...")`
+- **Storage**: In-memory only (data lost on container restart)
+- **Used By**: Readiness probe only
+
+### Health Probe Logging
+Both health probes include DEBUG level logging:
+
+```java
+@GetMapping("/health/live")
+public ResponseEntity<HealthResponse> live() {
+    logger.debug("Liveness probe called");  // ← DEBUG level
+    // ...
+}
+
+@GetMapping("/health/ready")
+public ResponseEntity<HealthResponse> ready() {
+    logger.debug("Readiness probe called");  // ← DEBUG level
+    // ...
+}
+```
+
+**Visibility**:
+- ✅ Visible if `LOGGING_LEVEL_MTA_EDA_CONSUMER: DEBUG` is set
+- ❌ Hidden if only `LOGGING_LEVEL_ROOT: INFO` is set (DEBUG filtered out)
+
+---
+
+## Request Validation Configuration
+
+### OrderDetailsRequest Validation
+The `OrderDetailsRequest` DTO validates incoming order ID requests:
+
+```java
+public record OrderDetailsRequest(
+    @NotBlank(message = "orderId is required and cannot be empty")
+    @Pattern(
+        regexp = "^[0-9A-Fa-f]+$",
+        message = "orderId must be in hexadecimal format (0-9, A-F)"
+    )
+    @JsonProperty("orderId")
+    String orderId
+) {}
+```
+
+**Validation Annotations**:
+- `@NotBlank`: Rejects null, empty, or whitespace-only values
+  - Error Message: "orderId is required and cannot be empty"
+  - HTTP Status: 400 Bad Request
+- `@Pattern`: Validates hexadecimal format (0-9, A-F, case-insensitive)
+  - Error Message: "orderId must be in hexadecimal format (0-9, A-F)"
+  - HTTP Status: 400 Bad Request
+
+**Valid Examples**:
+```
+ABC123
+def456
+FEDCBA
+1234567890
+```
+
+**Invalid Examples**:
+```
+ABC-123 (contains dash)
+XYZ123 (X, Y, Z not in hex)
+G1234 (G not in hex)
+(empty)
+```
+
+### AllOrdersFromTopicRequest Validation
+The `AllOrdersFromTopicRequest` DTO validates topic name requests:
+
+```java
+public record AllOrdersFromTopicRequest(
+    @NotBlank(message = "topicName is required")
+    @JsonProperty("topicName")
+    String topicName
+) {}
+```
+
+**Validation Annotations**:
+- `@NotBlank`: Ensures topic name is provided
+  - Error Message: "topicName is required"
+  - HTTP Status: 400 Bad Request
 
 ---
 

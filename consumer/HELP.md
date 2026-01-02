@@ -68,7 +68,7 @@ consumer/docker-compose.yml  (Manages: Consumer only)
 ### Environment Variables (In .env or command line)
 ```bash
 KAFKA_TOPIC=orders                    # Default: orders
-SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+SPRING_KAFKA_BOOTSTRAP_SERVERS=general:29092
 SPRING_KAFKA_CONSUMER_GROUP_ID=order-service-group
 SERVER_PORT=8081
 LOGGING_LEVEL_MTA_EDA_CONSUMER=DEBUG
@@ -145,7 +145,7 @@ docker-compose logs order-service | grep "Created order\|Duplicate\|Invalid"
 ### Consumer Won't Start
 ```bash
 # Check if producer (Kafka) is running
-docker ps | grep kafka
+docker ps | grep general
 
 # If not, start producer first
 cd ../producer
@@ -174,10 +174,10 @@ SERVER_PORT=8082 docker-compose up -d
 ### Messages Not Being Processed
 ```bash
 # Check consumer group
-docker-compose exec kafka kafka-consumer-groups.sh --bootstrap-server kafka:29092 --list
+docker-compose exec general general-consumer-groups.sh --bootstrap-server general:29092 --list
 
 # Check topic exists
-docker-compose exec kafka kafka-topics.sh --bootstrap-server kafka:29092 --list
+docker-compose exec general general-topics.sh --bootstrap-server general:29092 --list
 ```
 
 ---
@@ -352,19 +352,19 @@ SERVER_PORT=8082 docker-compose up -d
 ### Kafka Connection Error
 ```bash
 # Verify Kafka is running
-docker ps | grep kafka
+docker ps | grep general
 
 # Check Kafka health
-docker-compose logs kafka | grep -i error
+docker-compose logs general | grep -i error
 ```
 
 ### Messages Not Being Processed
 ```bash
 # Check consumer group
-docker-compose exec kafka kafka-consumer-groups.sh --bootstrap-server localhost:29092 --list
+docker-compose exec general general-consumer-groups.sh --bootstrap-server localhost:29092 --list
 
 # Check topic
-docker-compose exec kafka kafka-topics.sh --bootstrap-server localhost:29092 --list
+docker-compose exec general general-topics.sh --bootstrap-server localhost:29092 --list
 ```
 
 ### High CPU/Memory Usage

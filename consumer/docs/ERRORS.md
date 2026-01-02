@@ -143,33 +143,109 @@ Once an order passes idempotency and sequencing checks, it must be safely persis
 
 ---
 
-## 4. Query & API Layer Errors
+## Phase 4: Resilience & Error Handling Implementation
 
-When clients query the consumer's state via REST endpoints (Phase 3), errors are handled gracefully.
+### HealthService Integration
+The consumer implements a **HealthService** to monitor service health and dependencies:
 
-### Level 1: Order Not Found (404)
-- **Trigger**: Client requests `GET /order-details/{orderId}` for an `orderId` not in `processedOrderStore`.
-- **Response**: HTTP **404 Not Found** with a descriptive message.
-- **Rationale**: The order has not been received/processed yet, or the `orderId` is invalid.
-- **Example Response**:
-  ```json
-  {
-    "timestamp": "2026-01-02T12:00:00.000Z",
-    "error": "Not Found",
-    "message": "Order with ID ORD-999 not found in the system.",
-    "path": "/order-details/ORD-999",
-    "details": {
-      "orderId": "ORD-999",
-      "reason": "Order has not been processed yet or does not exist."
-    }
+#### **Service Health Check** (`getServiceStatus()`)
+- Returns `HealthCheck("UP", "Order Service is running and responsive")`
+- Checks if the service method is callable
+- On exception: Returns `HealthCheck("DOWN", "Service error: ...")`
+
+#### **Kafka Broker Health Check** (`getKafkaStatus()`)
+- Attempts to verify Kafka connectivity via `KafkaTemplate`
+- Returns `HealthCheck("UP", "Kafka broker is accessible")` on success
+- On exception: Returns `HealthCheck("DOWN", "Kafka broker is unavailable: ...")`
+- Critical for readiness probe
+
+#### **Local State Store Health Check** (`getLocalStateStatus()`)
+- Verifies in-memory `processedOrderStore` is accessible
+- Returns `HealthCheck("UP", "Local order state store is accessible")`
+- On exception: Returns `HealthCheck("DOWN", "Local state store is unavailable: ...")`
+
+### Health Probes in OrderController
+
+#### **Liveness Probe** (GET /order-service/health/live)
+```json
+{
+  "serviceName": "Order Service (Consumer)",
+  "type": "liveness",
+  "status": "UP",
+  "timestamp": "2026-01-02T12:00:00.123456Z",
+  "checks": {
+    "service": {"status": "UP", "details": "Order Service is running and responsive"}
   }
-  ```
+}
+```
+- **HTTP Status**: Always 200 OK (if service is running)
+- **Purpose**: Docker/Kubernetes uses this to detect dead containers
+- **Logging**: `logger.debug("Liveness probe called")`
 
-### Level 2: Kafka Broker Unavailability (503)
-- **Trigger**: (Future Phase) If the consumer needs to verify message ordering or re-read from Kafka, and the broker is down.
-- **Detection**: A `KafkaHealthService` can monitor the admin client connection.
-- **Response**: HTTP **503 Service Unavailable**.
-- **Rationale**: The service is temporarily unable to fulfill the request due to infrastructure issues.
+#### **Readiness Probe** (GET /order-service/health/ready)
+**When Kafka is UP:**
+```json
+{
+  "serviceName": "Order Service (Consumer)",
+  "type": "readiness",
+  "status": "UP",
+  "timestamp": "2026-01-02T12:00:00.123456Z",
+  "checks": {
+    "service": {"status": "UP", "details": "Order Service is running and responsive"},
+    "kafka": {"status": "UP", "details": "Kafka broker is accessible"},
+    "local-state": {"status": "UP", "details": "Local order state store is accessible"}
+  }
+}
+```
+- **HTTP Status**: 200 OK
+- **Purpose**: Service is ready to process requests
+
+**When Kafka is DOWN:**
+```json
+{
+  "serviceName": "Order Service (Consumer)",
+  "type": "readiness",
+  "status": "DOWN",
+  "timestamp": "2026-01-02T12:00:00.123456Z",
+  "checks": {
+    "service": {"status": "UP", "details": "Order Service is running and responsive"},
+    "kafka": {"status": "DOWN", "details": "Kafka broker is unavailable: Connection refused"},
+    "local-state": {"status": "UP", "details": "Local order state store is accessible"}
+  }
+}
+```
+- **HTTP Status**: 503 Service Unavailable
+- **Purpose**: Kubernetes removes service from load balancer
+- **Logging**: `logger.debug("Readiness probe called")`
+
+---
+
+## Phase 5: Request Validation Error Handling
+
+### OrderDetailsRequest Validation
+**Input:**
+```json
+{"orderId": "ABC123DEF"}
+```
+
+**Validation Checks:**
+1. `@NotBlank` → Checks if orderId is not null/empty
+   - Failure: HTTP 400, Message: "orderId is required and cannot be empty"
+2. `@Pattern(regexp = "^[0-9A-Fa-f]+$")` → Validates hexadecimal format
+   - Failure: HTTP 400, Message: "orderId must be in hexadecimal format (0-9, A-F)"
+
+**Example Invalid Requests:**
+```
+❌ {"orderId": ""} → 400 Bad Request
+❌ {"orderId": "XYZ-@#$"} → 400 Bad Request
+❌ {"orderId": "G1234"} → 400 Bad Request (G is not hex)
+✅ {"orderId": "ABC123"} → Proceeds to OrderService
+```
+
+### AllOrdersFromTopicRequest Validation
+**Validation Check:**
+- `@NotBlank` → Ensures topicName is provided
+  - Failure: HTTP 400, Message: "topicName is required"
 
 ---
 

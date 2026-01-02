@@ -1,7 +1,7 @@
-package mta.eda.producer.model.request;
+package mta.eda.producer.model.response;
 
 /**
- * HealthCheck - Individual health check result.
+ * Health check - Individual health check result.
  * Used within HealthResponse to report status of a specific component.
  */
 public record HealthCheck(

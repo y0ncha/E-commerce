@@ -1,4 +1,4 @@
-package mta.eda.consumer.service.kafka;
+package mta.eda.consumer.service.general;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;

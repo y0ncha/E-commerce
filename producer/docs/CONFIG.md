@@ -207,8 +207,8 @@ java -jar producer.jar
 ### Docker
 ```bash
 SPRING_PROFILES_ACTIVE=docker
-KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-# Uses: kafka:9092 (container network)
+KAFKA_BOOTSTRAP_SERVERS=general:9092
+# Uses: general:9092 (container network)
 ```
 
 ---

@@ -7,7 +7,7 @@ import mta.eda.producer.model.request.CreateOrderRequest;
 import mta.eda.producer.model.request.UpdateOrderRequest;
 import mta.eda.producer.model.order.Order;
 import mta.eda.producer.model.order.OrderItem;
-import mta.eda.producer.service.kafka.KafkaProducerService;
+import mta.eda.producer.service.general.KafkaProducerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
