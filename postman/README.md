@@ -1,401 +1,182 @@
-# Postman Test Suite - Exercise 2 (Kafka)
+# Postman Sanity Test Suite for Exercise 2
 
-## Overview
+This directory contains an automated sanity test suite for verifying the resilience and sequencing standards of Exercise 2 (Kafka E-commerce Backend).
 
-This directory contains automated Postman test collections for **Exercise 2** of the EDA (Event-Driven Architecture) course. The test suites validate Kafka-based resilience patterns, event sequencing guarantees, and data quality controls in the E-commerce microservices system.
+## Files
 
-**Total Test Requests:** 48 across 3 collections
+- **`EDA-Local.postman_environment.json`** - Environment configuration for local testing
+- **`Sanity.postman_collection.json`** - Automated test collection with 7 requests
 
-## Test Collections
+## Test Coverage
 
-### 1. Ex02-Resilience-and-Idempotency.postman_collection.json
-**Focus:** Resilience patterns and idempotent message processing  
-**Total Requests:** 12
+The suite verifies the complete end-to-end flow from order creation in the Cart Service (Producer) to state mirroring and shipping calculation in the Order Service (Consumer):
 
-**Test Coverage:**
-- ✅ **Health Checks:** Verify Producer and Consumer services with Kafka connectivity
-- ✅ **Idempotency - Create:** Duplicate `orderId` handling (409 Conflict from Producer)
-- ✅ **Idempotency - Update:** Duplicate status update handling (Consumer skips exact duplicates)
-- ✅ **Error Handling:** Non-existent orderId queries (404 Not Found)
-- ✅ **Diagnostic:** Verify order presence in Kafka topic
-
-**Key Scenarios:**
-1. Create order → Verify Consumer processing
-2. Attempt duplicate create → Producer rejects with 409
-3. Update order status → Verify Consumer updates state
-4. Send duplicate update → Consumer handles idempotently (At-Least-Once semantics)
-5. Query non-existent order → 404 Not Found
-
-**Educational Justification:**
-- **At-Least-Once Delivery:** Kafka may deliver the same message multiple times. Consumers must handle duplicates gracefully.
-- **Idempotency Check:** Consumer compares incoming `Order` with stored state using `.equals()` to skip exact duplicates.
-- **Message Key:** Using `orderId` as the Kafka message key ensures all events for the same order are processed in order.
-
----
-
-### 2. Ex02-Sequencing.postman_collection.json
-**Focus:** Event ordering and state machine validation  
-**Total Requests:** 17
-
-**Test Coverage:**
-- ✅ **Valid Transitions:** `CREATED → CONFIRMED → DISPATCHED → DELIVERED`
-- ✅ **Invalid Transitions:** Backward transitions (e.g., `DISPATCHED → CREATED`)
-- ✅ **Terminal State:** No transitions allowed from `DELIVERED`
-- ✅ **Fast-Forward:** Skip intermediate states (e.g., `CREATED → DELIVERED`)
-- ✅ **State Preservation:** Consumer rejects invalid transitions without corrupting state
-
-**State Machine Rules:**
-```
-CREATED     → CONFIRMED, DISPATCHED, DELIVERED  ✅
-CONFIRMED   → DISPATCHED, DELIVERED             ✅
-DISPATCHED  → DELIVERED                         ✅
-DELIVERED   → [Terminal - No transitions]       ❌
-```
-
-**Key Scenarios:**
-1. Create order with status `CREATED`
-2. Valid progression through all states
-3. Attempt backward transition → Consumer rejects, state preserved
-4. Attempt transition from terminal state → Consumer rejects
-5. Fast-forward test → Skip intermediate states (allowed)
-
-**Educational Justification:**
-- **Kafka Ordering Guarantee:** Events with the same key (orderId) are processed sequentially within a partition.
-- **State Machine Validation:** Consumer enforces business logic to prevent out-of-order events from corrupting state.
-- **Defensive Programming:** Unknown future statuses default to "allow" for extensibility.
-
----
-
-### 3. Ex02-Validation.postman_collection.json
-**Focus:** Input validation and data quality  
-**Total Requests:** 19 (organized in 3 folders)
-
-**Test Coverage:**
-
-**Producer Validation:** (10 requests)
-- ✅ Missing required fields (`orderId`, `numItems`)
-- ✅ Empty/blank values
-- ✅ Invalid orderId format (non-hexadecimal characters)
-- ✅ Invalid field types (string instead of integer)
-- ✅ Malformed JSON
-- ✅ Extra/unknown fields (gracefully ignored)
-
-**Consumer Validation:** (6 requests)
-- ✅ Missing required fields (`orderId`, `topicName`)
-- ✅ Empty/blank values
-- ✅ Invalid orderId format (non-hex characters)
-- ✅ Malformed JSON
-
-**Boundary Conditions:** (3 requests)
-- ✅ Zero `numItems`
-- ✅ Negative `numItems`
-- ✅ Very long `orderId` (1000 characters)
-
-**Expected Responses:**
-- **400 Bad Request:** Validation errors with descriptive messages
-- **404 Not Found:** Order not found in Consumer state
-- **409 Conflict:** Duplicate orderId in Producer
-
-**Educational Justification:**
-- **Fail-Fast Validation:** Use Jakarta Bean Validation (`@NotBlank`, `@Pattern`) to reject invalid requests early.
-- **Consistent Error Responses:** `GlobalExceptionHandler` provides uniform error structure across all endpoints.
-- **Poison Pill Handling:** Consumer logs and acknowledges malformed JSON to avoid infinite retry loops.
-
----
+1. **Health Check (Consumer)** - Verifies Kafka connectivity is UP
+2. **Create Order (Producer)** - Creates a new order with auto-generated hex OrderID
+3. **Get Order Details - Initial State (Consumer)** - Confirms CREATED status and shipping cost calculation
+4. **Update Order Status (Producer)** - Updates order to DISPATCHED status
+5. **Verify Sequential Update (Consumer)** - Confirms Consumer reflected DISPATCHED status
+6. **Resilience - Invalid Transition** - Attempts backward transition (DISPATCHED → CREATED) and verifies Consumer ignores it
+7. **Diagnostic Check (Consumer)** - Confirms OrderID exists in the Kafka topic
 
 ## Prerequisites
 
-### Required Services
-1. **Kafka Broker** (running on `localhost:9092`)
-2. **Producer Service** (Cart Service on `localhost:8081`)
-3. **Consumer Service** (Order Service on `localhost:8082`)
+Ensure both services are running:
+- **Producer (Cart Service)**: `http://localhost:8081`
+- **Consumer (Order Service)**: `http://localhost:8082`
 
-### Environment Setup
+### Starting Services with Docker Compose
 
-**Option 1: Import Environment (Recommended)**
-1. Import `environments/EDA-Local.postman_environment.json`
-2. Environment variables:
-   - `base_url_producer`: `http://localhost:8081/cart-service`
-   - `base_url_consumer`: `http://localhost:8082/order-service`
-   - `order_id`: (auto-generated per test)
-
-**Option 2: Manual Configuration**
-Create a new environment in Postman with the variables above.
-
----
-
-## Running the Tests
-
-### Option 1: Individual Collection
-1. Open Postman
-2. Import the desired collection from `postman/collections/`
-3. Select the `EDA-Local` environment
-4. Click "Run Collection" → "Run Ex02-..."
-5. View results and assertions
-
-### Option 2: Collection Runner (All Tests)
-1. Import all three collections
-2. Select `EDA-Local` environment
-3. Use Collection Runner to execute in sequence:
-   - Ex02-Validation (data quality baseline)
-   - Ex02-Resilience-and-Idempotency (operational resilience)
-   - Ex02-Sequencing (state machine validation)
-
-### Option 3: Newman CLI (Automated)
 ```bash
-# Install Newman (Postman CLI)
+# Start Producer (includes Kafka and Zookeeper)
+cd producer
+docker-compose up -d
+
+# Start Consumer (connects to existing Kafka)
+cd consumer
+docker-compose up -d
+```
+
+## Usage
+
+### Option 1: Postman GUI
+
+1. Open Postman
+2. Import the environment:
+   - Click "Import" → Select `EDA-Local.postman_environment.json`
+3. Import the collection:
+   - Click "Import" → Select `Sanity.postman_collection.json`
+4. Select "EDA-Local" environment from the dropdown (top-right)
+5. Run the collection:
+   - Open "Sanity" collection
+   - Click "Run" button
+   - Click "Run Sanity" to execute all tests
+
+### Option 2: Newman CLI
+
+```bash
+# Install Newman (if not already installed)
 npm install -g newman
 
-# Run individual collection
-newman run postman/collections/Ex02-Resilience-and-Idempotency.postman_collection.json \
-  -e postman/environments/EDA-Local.postman_environment.json
+# Run the test suite
+newman run Sanity.postman_collection.json -e EDA-Local.postman_environment.json
 
-# Run all collections
-newman run postman/collections/Ex02-Validation.postman_collection.json \
-  -e postman/environments/EDA-Local.postman_environment.json
+# Run with detailed output
+newman run Sanity.postman_collection.json -e EDA-Local.postman_environment.json --verbose
 
-newman run postman/collections/Ex02-Resilience-and-Idempotency.postman_collection.json \
-  -e postman/environments/EDA-Local.postman_environment.json
-
-newman run postman/collections/Ex02-Sequencing.postman_collection.json \
-  -e postman/environments/EDA-Local.postman_environment.json
+# Run and generate HTML report
+newman run Sanity.postman_collection.json -e EDA-Local.postman_environment.json \
+  --reporters cli,html --reporter-html-export report.html
 ```
 
----
+## API Endpoints
 
-## Test Design Principles
+### Producer (Cart Service) - Port 8081
 
-### 1. Atomic Tests (One Scenario Per Test)
-Each test request validates a single behavior. This ensures:
-- **Clear Failure Diagnosis:** Failed tests pinpoint exact issues
-- **Independent Execution:** Tests don't depend on each other (except within a collection)
-- **Educational Clarity:** Each test demonstrates one Kafka/validation concept
+- `POST /cart-service/create-order` - Create new order
+  ```json
+  {
+    "orderId": "A1B2C3D4E5F60789",
+    "numItems": 5
+  }
+  ```
 
-### 2. Pre-Request Scripts
-- Generate unique `orderId` values to avoid cross-test interference
-- Hex format: 16-character hexadecimal strings (e.g., `"ABC123DEF4567890"`)
+- `PUT /cart-service/update-order` - Update order status
+  ```json
+  {
+    "orderId": "ORD-A1B2C3D4E5F60789",
+    "status": "DISPATCHED"
+  }
+  ```
 
-### 3. Test Assertions
-- **Status Code Validation:** Verify HTTP response codes (200, 201, 400, 404, 409)
-- **Response Body Validation:** Check JSON structure and key fields
-- **State Preservation:** Verify Consumer state after invalid transitions
+### Consumer (Order Service) - Port 8082
 
-### 4. Educational Comments
-- Test descriptions cite course concepts (e.g., "At-Least-Once delivery")
-- Console logs explain behavior for learning purposes
+- `GET /order-service/health/ready` - Readiness probe (includes Kafka check)
 
----
+- `POST /order-service/order-details` - Get order details
+  ```json
+  {
+    "orderId": "A1B2C3D4E5F60789"
+  }
+  ```
 
-## Expected Failures & Scenarios
+- `POST /order-service/getAllOrdersFromTopic` - Get all order IDs from topic
+  ```json
+  {
+    "topicName": "orders"
+  }
+  ```
 
-### Resilience Collection
-| Test | Expected Result | Reason |
-|------|----------------|--------|
-| Duplicate Create Order | 409 Conflict | Producer rejects duplicate `orderId` |
-| Duplicate Update | 200 OK | Producer publishes; Consumer skips idempotently |
-| Non-Existent Order | 404 Not Found | Order not in Consumer state |
+## Expected Results
 
-### Sequencing Collection
-| Test | Expected Result | Reason |
-|------|----------------|--------|
-| Valid Transitions | 200 OK | State machine allows forward progress |
-| Backward Transitions | State Preserved | Consumer rejects; status unchanged |
-| Terminal Transition | State Preserved | No transitions from `DELIVERED` |
+All 7 tests should pass when services are healthy:
 
-### Validation Collection
-| Test | Expected Result | Reason |
-|------|----------------|--------|
-| Missing Fields | 400 Bad Request | Bean Validation (`@NotBlank`) |
-| Invalid Format | 400 Bad Request | Pattern validation (`@Pattern`) |
-| Malformed JSON | 400 Bad Request | `HttpMessageNotReadableException` |
-| Extra Fields | 201 Created | Spring Boot ignores unknown fields |
-
----
-
-## Extending the Test Suite
-
-### Adding New Test Cases
-
-**1. Create a New Request in Existing Collection:**
-```json
-{
-  "name": "Test X.X - Your Scenario Description",
-  "request": {
-    "method": "POST|PUT|GET",
-    "url": "{{base_url_producer}}/endpoint",
-    "body": { ... }
-  },
-  "event": [
-    {
-      "listen": "test",
-      "script": {
-        "exec": [
-          "pm.test('Assertion description', () => {",
-          "    pm.response.to.have.status(200);",
-          "});"
-        ]
-      }
-    }
-  ]
-}
 ```
-
-**2. Create a New Collection:**
-- Use `Ex02-*.postman_collection.json` as templates
-- Follow naming convention: `Ex02-[Feature].postman_collection.json`
-- Update `info.description` with test coverage details
-
-**3. Test Naming Convention:**
+✓ Health Check (Consumer)
+  ✓ Status code is 200
+  ✓ Kafka connection is UP
+  
+✓ Create Order (Producer)
+  ✓ Order Created successfully
+  ✓ Returns valid OrderID
+  
+✓ Get Order Details - Initial State (Consumer)
+  ✓ Status code is 200
+  ✓ Shipping cost is calculated and status is CREATED
+  
+✓ Update Order Status (Producer)
+  ✓ Update accepted by Producer
+  
+✓ Verify Sequential Update (Consumer)
+  ✓ Status code is 200
+  ✓ Consumer reflected DISPATCHED status
+  
+✓ Resilience - Invalid Transition (Consumer Check)
+  ✓ Producer did not crash
+  ✓ Verification: Consumer ignored old status
+  
+✓ Diagnostic Check (Consumer)
+  ✓ Status code is 200
+  ✓ Topic contains our OrderID
 ```
-Test [Phase].[Step] - [Action]: [Expected Behavior]
-```
-Examples:
-- `Test 1.1 - Create Order (First Time)`
-- `Test 4.2 - Verify Consumer Rejected Backward Transition`
-
----
 
 ## Troubleshooting
 
 ### Services Not Running
-**Error:** Connection refused on `localhost:8081` or `localhost:8082`
 
-**Solution:**
+If health check fails with connection refused:
 ```bash
-# Start Producer (includes Kafka and Zookeeper)
-cd producer && docker-compose up -d
+# Check if services are running
+docker ps
 
-# Start Consumer
-cd consumer && docker-compose up -d
-
-# Verify services
-curl http://localhost:8081/cart-service/health/ready
-curl http://localhost:8082/order-service/health/ready
+# Check service logs
+docker logs producer-app-1
+docker logs consumer-app-1
 ```
 
-### Kafka Broker Unavailable
-**Error:** `checks.kafka.status: "DOWN"` in health check
+### Kafka Not Ready
 
-**Solution:**
+If Kafka check reports DOWN:
 ```bash
-# Check Kafka container
-docker ps | grep kafka
+# Check Kafka logs
+docker logs producer-kafka-1
 
-# Restart Kafka
-cd producer && docker-compose restart kafka
-
-# Wait 30 seconds for broker to be ready
+# Restart services
+cd producer && docker-compose restart
+cd consumer && docker-compose restart
 ```
 
-### Test Failures Due to Timing
-**Issue:** Consumer hasn't processed message before query
+### Consumer Lag
 
-**Solution:**
-- Collections include `setTimeout(() => {}, 500)` delays
-- Increase delay in test scripts if needed:
-  ```javascript
-  setTimeout(() => {}, 1000); // 1 second
-  ```
+If Sequential Update test fails (Consumer hasn't processed the update yet):
+- Wait a few seconds and re-run the test
+- Check consumer logs for processing delays
+- Verify Kafka consumer is running and not blocked
 
-### Stale Test Data
-**Issue:** Previous test runs left orders in Consumer state
+## Notes
 
-**Solution:**
-```bash
-# Restart Consumer to clear in-memory state
-cd consumer && docker-compose restart order-service
-```
-
----
-
-## Integration with CI/CD
-
-### GitHub Actions Example
-```yaml
-name: Postman Tests
-
-on: [push, pull_request]
-
-jobs:
-  api-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      
-      - name: Start Services
-        run: |
-          cd producer && docker-compose up -d
-          cd ../consumer && docker-compose up -d
-          sleep 30  # Wait for services to be ready
-      
-      - name: Install Newman
-        run: npm install -g newman
-      
-      - name: Run Validation Tests
-        run: newman run postman/collections/Ex02-Validation.postman_collection.json \
-          -e postman/environments/EDA-Local.postman_environment.json
-      
-      - name: Run Resilience Tests
-        run: newman run postman/collections/Ex02-Resilience-and-Idempotency.postman_collection.json \
-          -e postman/environments/EDA-Local.postman_environment.json
-      
-      - name: Run Sequencing Tests
-        run: newman run postman/collections/Ex02-Sequencing.postman_collection.json \
-          -e postman/environments/EDA-Local.postman_environment.json
-```
-
----
-
-## Architecture Reference
-
-### Message Flow
-```
-Client → Producer (Cart Service) → Kafka Topic (orders) → Consumer (Order Service)
-```
-
-### Key Kafka Concepts Tested
-1. **Message Key:** `orderId` ensures partition-level ordering
-2. **At-Least-Once Delivery:** Messages may be delivered multiple times
-3. **Manual Offset Commits:** Consumer commits only after successful processing
-4. **Idempotency:** Consumer handles duplicate messages gracefully
-
-### API Endpoints
-
-**Producer (Cart Service):**
-- `POST /cart-service/create-order` - Create new order
-- `PUT /cart-service/update-order` - Update order status
-- `GET /cart-service/health/ready` - Readiness probe
-
-**Consumer (Order Service):**
-- `POST /order-service/order-details` - Get order with shipping cost
-- `POST /order-service/getAllOrdersFromTopic` - List all processed orders
-- `GET /order-service/health/ready` - Readiness probe
-
----
-
-## Additional Resources
-
-- **Course Material:** Review Session 6 (Kafka Consumer) and Session 7 (Error Handling)
-- **Exercise Requirements:** See `../docs/Ex.02.md`
-- **Service Plans:**
-  - Producer: `../producer/docs/PLAN.md`
-  - Consumer: `../consumer/docs/PLAN.md`
-- **Error Handling:** `../consumer/docs/ERRORS.md`
-
----
-
-## TL;DR
-
-**Quick Start:**
-1. Start services: `cd producer && docker-compose up -d && cd ../consumer && docker-compose up -d`
-2. Import environment: `postman/environments/EDA-Local.postman_environment.json`
-3. Run collections in Postman or via Newman CLI
-4. Review test assertions and console logs for educational insights
-
-**Test Coverage:**
-- **Resilience:** Idempotency, error handling, diagnostic checks
-- **Sequencing:** State machine validation, ordering guarantees
-- **Validation:** Input validation, boundary conditions, malformed data
-
-**Key Takeaway:**
-These tests validate that the system correctly implements Kafka-specific patterns (message keying, ordering, manual commits) and handles edge cases gracefully.
+- **OrderID Format**: The test generates a random 16-character hex ID (e.g., "A1B2C3D4E5F60789"), which the Producer normalizes to "ORD-####" format
+- **Topic Name**: The diagnostic check uses topic name "orders" (configured in docker-compose)
+- **Async Processing**: Consumer processes events asynchronously, so there may be a small delay between Producer update and Consumer state change
+- **Idempotency**: The Consumer handles duplicate messages gracefully (At-Least-Once delivery)
+- **Sequencing**: The Consumer validates state transitions and rejects invalid backward transitions
