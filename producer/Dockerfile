@@ -33,7 +33,7 @@ COPY --from=build /app/target/*.jar ./app.jar
 RUN rm -f ./app.jar.original 2>/dev/null || true
 
 # Expose the API port
-EXPOSE 8080
+EXPOSE 8081
 
 # Start the application
 ENTRYPOINT ["java", "-jar", "app.jar"]

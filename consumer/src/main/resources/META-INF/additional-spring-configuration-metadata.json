@@ -1,0 +1,10 @@
+{
+  "properties": [
+    {
+      "name": "kafka.topic.name",
+      "type": "java.lang.String",
+      "description": "Kafka topic name for order events."
+    }
+  ]
+}
+

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   order-service:
     image: y0ncha/eda-consumer:2.0.0
