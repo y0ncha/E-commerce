@@ -1,0 +1,746 @@
+{
+	"info": {
+		"_postman_id": "sequencing-ex02",
+		"name": "Ex02 - Event Sequencing and State Transitions",
+		"description": "Exercise 2 test suite focusing on event ordering and state machine validation.\n\nTests covered:\n- Valid state transitions (CREATED → CONFIRMED → DISPATCHED → DELIVERED)\n- Invalid/backward state transitions\n- Out-of-order event rejection\n- State preservation after invalid transitions\n\nPrerequisites:\n- Producer and Consumer services running\n- Kafka broker running\n- EDA-Local environment configured\n\nKey Concept:\nKafka guarantees ordering within a partition. Using orderId as the message key ensures all events for the same order are processed sequentially. The Consumer enforces a state machine to reject out-of-order events.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Test 1.1 - Create Order for Sequencing Test",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"// Generate unique orderId for sequencing tests",
+							"function generateHexId(length) {",
+							"    let result = '';",
+							"    const characters = '0123456789ABCDEF';",
+							"    for (let i = 0; i < length; i++) {",
+							"        result += characters.charAt(Math.floor(Math.random() * characters.length));",
+							"    }",
+							"    return result;",
+							"}",
+							"",
+							"const orderId = generateHexId(16);",
+							"pm.environment.set(\"test_order_id_sequencing\", orderId);",
+							"console.log(\"Generated orderId for sequencing test:\", orderId);"
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Order created successfully (201 Created)\", () => {",
+							"    pm.response.to.have.status(201);",
+							"});",
+							"",
+							"pm.test(\"Initial status is CREATED\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.order.status).to.eql(\"CREATED\");",
+							"});",
+							"",
+							"// Wait for consumer to process",
+							"setTimeout(() => {}, 500);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\",\n    \"numItems\": 4\n}"
+				},
+				"url": {
+					"raw": "{{base_url_producer}}/create-order",
+					"host": ["{{base_url_producer}}"],
+					"path": ["create-order"]
+				},
+				"description": "Create a new order with initial status CREATED. This is the starting point for state transition tests."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 1.2 - Verify Consumer State: CREATED",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Consumer processed order (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Consumer state is CREATED\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.status).to.eql(\"CREATED\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_consumer}}/order-details",
+					"host": ["{{base_url_consumer}}"],
+					"path": ["order-details"]
+				},
+				"description": "Verify Consumer initial state is CREATED."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 2.1 - Valid Transition: CREATED → CONFIRMED",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Update accepted (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Status updated to CONFIRMED\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.order.status).to.eql(\"CONFIRMED\");",
+							"});",
+							"",
+							"setTimeout(() => {}, 500);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\",\n    \"status\": \"CONFIRMED\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_producer}}/update-order",
+					"host": ["{{base_url_producer}}"],
+					"path": ["update-order"]
+				},
+				"description": "Valid transition: Move from CREATED to CONFIRMED."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 2.2 - Verify Consumer State: CONFIRMED",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Consumer processed transition (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Consumer state is CONFIRMED\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.status).to.eql(\"CONFIRMED\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_consumer}}/order-details",
+					"host": ["{{base_url_consumer}}"],
+					"path": ["order-details"]
+				},
+				"description": "Verify Consumer state transitioned to CONFIRMED."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 3.1 - Valid Transition: CONFIRMED → DISPATCHED",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Update accepted (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Status updated to DISPATCHED\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.order.status).to.eql(\"DISPATCHED\");",
+							"});",
+							"",
+							"setTimeout(() => {}, 500);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\",\n    \"status\": \"DISPATCHED\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_producer}}/update-order",
+					"host": ["{{base_url_producer}}"],
+					"path": ["update-order"]
+				},
+				"description": "Valid transition: Move from CONFIRMED to DISPATCHED."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 3.2 - Verify Consumer State: DISPATCHED",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Consumer processed transition (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Consumer state is DISPATCHED\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.status).to.eql(\"DISPATCHED\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_consumer}}/order-details",
+					"host": ["{{base_url_consumer}}"],
+					"path": ["order-details"]
+				},
+				"description": "Verify Consumer state transitioned to DISPATCHED."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 4.1 - Invalid Transition: DISPATCHED → CREATED (Backward)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"// Producer accepts the update (it publishes events as-is)",
+							"pm.test(\"Producer publishes backward transition event (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"// Consumer will reject this transition (state machine validation)",
+							"setTimeout(() => {}, 500);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\",\n    \"status\": \"CREATED\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_producer}}/update-order",
+					"host": ["{{base_url_producer}}"],
+					"path": ["update-order"]
+				},
+				"description": "Invalid transition: Attempt to move backward from DISPATCHED to CREATED. Producer publishes the event, but Consumer should reject it."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 4.2 - Verify Consumer Rejected Backward Transition",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Consumer preserved correct state (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Consumer state remains DISPATCHED (invalid transition rejected)\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.status).to.eql(\"DISPATCHED\");",
+							"    console.log(\"Consumer correctly rejected backward transition. State preserved: DISPATCHED\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_consumer}}/order-details",
+					"host": ["{{base_url_consumer}}"],
+					"path": ["order-details"]
+				},
+				"description": "Verify Consumer rejected the backward transition. State should remain DISPATCHED (state machine validation)."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 5.1 - Invalid Transition: DISPATCHED → CONFIRMED (Backward)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Producer publishes backward transition event (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"setTimeout(() => {}, 500);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\",\n    \"status\": \"CONFIRMED\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_producer}}/update-order",
+					"host": ["{{base_url_producer}}"],
+					"path": ["update-order"]
+				},
+				"description": "Invalid transition: Attempt to move backward from DISPATCHED to CONFIRMED."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 5.2 - Verify Consumer Rejected Transition",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Consumer preserved correct state (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Consumer state remains DISPATCHED\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.status).to.eql(\"DISPATCHED\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_consumer}}/order-details",
+					"host": ["{{base_url_consumer}}"],
+					"path": ["order-details"]
+				},
+				"description": "Verify Consumer rejected the transition. State should remain DISPATCHED."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 6.1 - Valid Transition: DISPATCHED → DELIVERED (Terminal)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Update accepted (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Status updated to DELIVERED\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.order.status).to.eql(\"DELIVERED\");",
+							"});",
+							"",
+							"setTimeout(() => {}, 500);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\",\n    \"status\": \"DELIVERED\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_producer}}/update-order",
+					"host": ["{{base_url_producer}}"],
+					"path": ["update-order"]
+				},
+				"description": "Valid transition: Move from DISPATCHED to DELIVERED (terminal state)."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 6.2 - Verify Consumer State: DELIVERED",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Consumer processed transition (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Consumer state is DELIVERED (terminal)\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.status).to.eql(\"DELIVERED\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_consumer}}/order-details",
+					"host": ["{{base_url_consumer}}"],
+					"path": ["order-details"]
+				},
+				"description": "Verify Consumer state transitioned to DELIVERED (terminal state)."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 7.1 - Terminal State: Attempt Transition from DELIVERED",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Producer publishes event from terminal state (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"// Consumer should reject any transition from DELIVERED",
+							"setTimeout(() => {}, 500);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\",\n    \"status\": \"CREATED\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_producer}}/update-order",
+					"host": ["{{base_url_producer}}"],
+					"path": ["update-order"]
+				},
+				"description": "Test terminal state: Attempt to transition from DELIVERED (terminal) to any other state. Consumer should reject."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 7.2 - Verify Consumer Rejected Terminal Transition",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Consumer preserved terminal state (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Consumer state remains DELIVERED (terminal state protected)\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.status).to.eql(\"DELIVERED\");",
+							"    console.log(\"Consumer correctly rejected transition from terminal state DELIVERED\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_sequencing}}\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_consumer}}/order-details",
+					"host": ["{{base_url_consumer}}"],
+					"path": ["order-details"]
+				},
+				"description": "Verify Consumer rejected transition from terminal state. State should remain DELIVERED."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 8 - Fast-Forward: CREATED → DELIVERED (Skip Intermediates)",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"// Generate new orderId for fast-forward test",
+							"function generateHexId(length) {",
+							"    let result = '';",
+							"    const characters = '0123456789ABCDEF';",
+							"    for (let i = 0; i < length; i++) {",
+							"        result += characters.charAt(Math.floor(Math.random() * characters.length));",
+							"    }",
+							"    return result;",
+							"}",
+							"pm.environment.set(\"test_order_id_fastforward\", generateHexId(16));"
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Order created (201 Created)\", () => {",
+							"    pm.response.to.have.status(201);",
+							"});",
+							"",
+							"setTimeout(() => {}, 500);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_fastforward}}\",\n    \"numItems\": 2\n}"
+				},
+				"url": {
+					"raw": "{{base_url_producer}}/create-order",
+					"host": ["{{base_url_producer}}"],
+					"path": ["create-order"]
+				},
+				"description": "Create new order for fast-forward test (skip intermediate states)."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 8.1 - Fast-Forward: Jump to DELIVERED",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Update accepted (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"setTimeout(() => {}, 500);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_fastforward}}\",\n    \"status\": \"DELIVERED\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_producer}}/update-order",
+					"host": ["{{base_url_producer}}"],
+					"path": ["update-order"]
+				},
+				"description": "Fast-forward: Jump from CREATED directly to DELIVERED (skip CONFIRMED and DISPATCHED). Consumer allows forward skips."
+			},
+			"response": []
+		},
+		{
+			"name": "Test 8.2 - Verify Consumer Accepted Fast-Forward",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Consumer processed fast-forward (200 OK)\", () => {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Consumer state is DELIVERED (fast-forward accepted)\", () => {",
+							"    const jsonData = pm.response.json();",
+							"    pm.expect(jsonData.status).to.eql(\"DELIVERED\");",
+							"    console.log(\"Consumer accepted fast-forward transition: CREATED → DELIVERED\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"orderId\": \"{{test_order_id_fastforward}}\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url_consumer}}/order-details",
+					"host": ["{{base_url_consumer}}"],
+					"path": ["order-details"]
+				},
+				"description": "Verify Consumer accepted the fast-forward transition. State should be DELIVERED."
+			},
+			"response": []
+		}
+	]
+}
