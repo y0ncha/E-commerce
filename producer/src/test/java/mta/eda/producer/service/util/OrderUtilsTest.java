@@ -1,4 +1,4 @@
-package mta.eda.producer.service.utils;
+package mta.eda.producer.service.util;
 
 import mta.eda.producer.model.order.OrderItem;
 import org.junit.jupiter.api.Test;

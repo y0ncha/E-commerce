@@ -2,7 +2,7 @@ package mta.eda.consumer.service.order;
 
 import mta.eda.consumer.model.order.Order;
 import mta.eda.consumer.model.order.ProcessedOrder;
-import static mta.eda.consumer.service.utils.OrderUtils.*;
+import static mta.eda.consumer.service.util.OrderUtils.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;

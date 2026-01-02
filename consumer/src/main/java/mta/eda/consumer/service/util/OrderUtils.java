@@ -1,4 +1,4 @@
-package mta.eda.consumer.service.utils;
+package mta.eda.consumer.service.util;
 
 import mta.eda.consumer.model.order.Order;
 

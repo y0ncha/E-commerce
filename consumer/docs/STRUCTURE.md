@@ -32,7 +32,10 @@ consumer/
 │   │
 │   └── service/
 │       ├── general/
-│       │   └── HealthService.java            # Health check operations (service, Kafka, state)
+│       │   └── HealthService.java            # Health check operations (reports Kafka status)
+│       │
+│       ├── kafka/
+│       │   └── KafkaConnectivityService.java # Kafka connectivity monitoring with Resilience4j
 │       │
 │       ├── order/
 │       │   └── OrderService.java             # Order processing logic (idempotency, sequencing, shipping)
@@ -152,12 +155,28 @@ public record HealthResponse(
 ```
 
 ### **service/general/HealthService.java**
-Health check service with three methods:
+Health check service reporting system status:
 - `getServiceStatus()` - Service responsiveness (always UP if callable)
-- `getKafkaStatus()` - Kafka broker connectivity via AdminClient (actual connection test)
+- `getKafkaStatus()` - Kafka connectivity status (cached from KafkaConnectivityService)
 - `getLocalStateStatus()` - Local state store accessibility
 
-**Key Feature:** Uses Kafka AdminClient to verify broker connectivity with 3-second timeout
+**Key Feature:** Returns instant responses using cached state (no blocking)
+
+### **service/kafka/KafkaConnectivityService.java**
+Asynchronous Kafka connectivity management with Resilience4j:
+- `monitorKafkaAsync()` - Background monitoring loop (async, non-blocking)
+- `connectAndManageListeners()` - Connection management with exponential backoff
+- `testKafkaConnection()` - Kafka broker connectivity test (3s timeout)
+- `startKafkaListeners()` - Interrupt-safe listener startup
+- `stopKafkaListeners()` - Interrupt-safe listener shutdown
+- `isKafkaConnected()` - Returns cached connection state
+
+**Features:**
+- Uses Resilience4j Retry for exponential backoff (2s → 4s → 8s ... → 60s max)
+- Infinite retries (never gives up)
+- Automatic listener restart when Kafka becomes available
+- Thread-safe state management with AtomicBoolean
+- Async processing via @EnableAsync
 
 ### **service/order/OrderService.java**
 Core event processing logic:
@@ -184,7 +203,8 @@ Utility methods for order processing:
 | **model.order** | Domain Objects | Order entities (records) |
 | **model.request** | Input DTOs | Request validation |
 | **model.response** | Output DTOs | Response objects |
-| **service.general** | Cross-cutting | Health checks with actual Kafka connectivity test |
+| **service.general** | Cross-cutting | Health checks (status reporting) |
+| **service.kafka** | Kafka Integration | Connectivity monitoring, listener management |
 | **service.order** | Business Logic | Processing, validation, state management |
 | **service.utils** | Utilities | Shipping cost calculation, orderId normalization |
 

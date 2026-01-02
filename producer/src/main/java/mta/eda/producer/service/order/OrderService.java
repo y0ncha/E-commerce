@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static mta.eda.producer.service.utils.OrderUtils.*;
+import static mta.eda.producer.service.util.OrderUtils.*;
 
 /**
  * OrderService

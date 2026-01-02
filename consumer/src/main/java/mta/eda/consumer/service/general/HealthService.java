@@ -1,30 +1,28 @@
 package mta.eda.consumer.service.general;
 
 import mta.eda.consumer.model.response.HealthCheck;
-import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.AdminClientConfig;
+import mta.eda.consumer.service.kafka.KafkaConnectivityService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.ExecutionException;
-
 /**
- * HealthService - Handles health check operations for the Consumer service.
- * Provides status of the service itself and Kafka broker connectivity.
+ * HealthService - Provides health check information for the Consumer service.
+ * Reports:
+ * - Service status (always UP if running)
+ * - Kafka connectivity status (from KafkaConnectivityService)
+ * - Local state store accessibility
+ * Note: Actual Kafka monitoring and retry logic is handled by KafkaConnectivityService
  */
 @Service
 public class HealthService {
 
     private static final Logger logger = LoggerFactory.getLogger(HealthService.class);
 
-    private final String bootstrapServers;
+    private final KafkaConnectivityService kafkaConnectivityService;
 
-    public HealthService(@Value("${spring.kafka.bootstrap-servers:localhost:9092}") String bootstrapServers) {
-        this.bootstrapServers = bootstrapServers;
+    public HealthService(KafkaConnectivityService kafkaConnectivityService) {
+        this.kafkaConnectivityService = kafkaConnectivityService;
     }
 
     /**
@@ -45,30 +43,17 @@ public class HealthService {
 
     /**
      * Get the health status of the Kafka broker.
-     * Attempts to connect to Kafka to verify broker availability by fetching broker metadata.
+     * Returns cached connectivity status from KafkaConnectivityService background monitoring.
      *
      * @return HealthCheck with Kafka broker status
      */
     public HealthCheck getKafkaStatus() {
-        try {
-            // Create an AdminClient to check Kafka connectivity
-            Map<String, Object> adminProps = new HashMap<>();
-            adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-            adminProps.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 3000);
-            adminProps.put(AdminClientConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG, 1000);
+        boolean isConnected = kafkaConnectivityService.isKafkaConnected();
 
-            try (AdminClient admin = AdminClient.create(adminProps)) {
-                // Try to describe the cluster - this will fail if Kafka is unreachable
-                admin.describeCluster().nodes().get();
-                logger.debug("Kafka broker is reachable at {}", bootstrapServers);
-                return new HealthCheck("UP", "Kafka broker is accessible at " + bootstrapServers);
-            }
-        } catch (ExecutionException | InterruptedException e) {
-            logger.warn("Kafka broker is unreachable at {}: {}", bootstrapServers, e.getMessage());
-            return new HealthCheck("DOWN", "Kafka broker is unavailable at " + bootstrapServers);
-        } catch (Exception e) {
-            logger.error("Error checking Kafka status", e);
-            return new HealthCheck("DOWN", "Kafka broker is unavailable: " + e.getMessage());
+        if (isConnected) {
+            return new HealthCheck("UP", "Kafka broker is accessible at " + kafkaConnectivityService.getBootstrapServers());
+        } else {
+            return new HealthCheck("DOWN", "Kafka broker unavailable at " + kafkaConnectivityService.getBootstrapServers() + " (retrying with exponential backoff)");
         }
     }
 
