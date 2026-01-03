@@ -87,14 +87,16 @@ public class KafkaConsumerConfig {
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
 
         // Configure native error handling with exponential backoff and DLT
-        // Retry Pattern:
-        // - Initial interval: 2 seconds
+        // Retry Pattern (optimized for fast recovery):
+        // - Initial interval: 1 second (faster than before)
         // - Multiplier: 2.0 (exponential)
+        // - Max interval: 10 seconds (quicker retries)
         // - Max attempts: 3
+        // Retry sequence: 1s, 2s, 4s
         // This allows transient failures (brief Kafka unavailability, network hiccups) to recover
-        // without giving up immediately, while also not waiting indefinitely.
-        ExponentialBackOff backOff = new ExponentialBackOff(2000, 2.0);
-        backOff.setMaxInterval(30000);  // Cap at 30 seconds
+        // quickly without giving up immediately, while also not waiting too long.
+        ExponentialBackOff backOff = new ExponentialBackOff(1000, 2.0);
+        backOff.setMaxInterval(10000);  // Cap at 10 seconds (reduced from 30s)
 
         DefaultErrorHandler errorHandler = new DefaultErrorHandler(
                 new DeadLetterPublishingRecoverer(kafkaTemplate),  // Send to DLT on final failure

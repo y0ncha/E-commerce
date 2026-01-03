@@ -67,12 +67,15 @@ public class KafkaConnectivityService {
         RetryRegistry registry = (retryRegistry != null) ? retryRegistry : RetryRegistry.ofDefaults();
 
         // Configure Resilience4j Retry with exponential backoff
+        // Optimized for fast startup: 500ms initial interval, max 10s between retries
+        // Retry sequence: 500ms, 1s, 2s, 4s, 8s, 10s, 10s, 10s... (capped at 10s)
         RetryConfig retryConfig = RetryConfig.custom()
                 .maxAttempts(Integer.MAX_VALUE)                          // Infinite retries
                 .intervalFunction(
                         io.github.resilience4j.core.IntervalFunction.ofExponentialBackoff(
-                                2000,   // Initial interval: 2 seconds
-                                2.0     // Multiplier: 2x exponential
+                                500,    // Initial interval: 500ms (4x faster than before)
+                                2.0,    // Multiplier: 2x exponential
+                                10000   // Max interval: 10 seconds (cap to avoid long waits)
                         )
                 )
                 .retryOnException(e -> true)                             // Retry on any exception
@@ -142,13 +145,17 @@ public class KafkaConnectivityService {
                 logger.debug("Kafka retry cycle completed");
             }
 
-            // Schedule the next check in 30 seconds (non-blocking)
-            scheduleNextCheck(30000);
+            // Adaptive scheduling: faster checks when disconnected, slower when connected
+            // - Disconnected: 5 seconds (more aggressive monitoring)
+            // - Connected: 30 seconds (maintain health, less overhead)
+            long nextCheckDelay = kafkaConnected.get() ? 30000 : 5000;
+            scheduleNextCheck(nextCheckDelay);
 
         } catch (Exception e) {
             logger.error("Unexpected error in connectivity check: {}", e.getMessage());
-            // Continue monitoring with the next check
-            scheduleNextCheck(30000);
+            // Continue monitoring with faster retry if disconnected
+            long nextCheckDelay = kafkaConnected.get() ? 30000 : 5000;
+            scheduleNextCheck(nextCheckDelay);
         }
     }
 
