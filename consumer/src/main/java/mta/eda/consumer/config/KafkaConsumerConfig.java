@@ -60,7 +60,7 @@ public class KafkaConsumerConfig {
      * 1. Manual acknowledgment mode (AckMode.MANUAL_IMMEDIATE)
      * 2. Native error handling with exponential backoff retry
      * 3. Dead Letter Topic (DLT) recovery for persistently failed messages
-     * 4. Disabled auto-startup to allow KafkaConnectivityService to manage startup
+     * 4. Auto-startup enabled for immediate consumption
      * At-Least-Once Delivery Model:
      * - Messages are acknowledged ONLY after successful processing
      * - If processing fails, the offset is NOT committed, allowing redelivery
@@ -105,9 +105,10 @@ public class KafkaConsumerConfig {
 
         factory.setCommonErrorHandler(errorHandler);
 
-        // Allow Consumer to run without Kafka - listeners won't auto-start if broker is unavailable
-        // The KafkaConnectivityService will manage listener startup/shutdown based on broker availability
-        factory.setAutoStartup(false);
+        // Enable auto-startup for immediate consumption
+        // Note: This means Spring will attempt to connect immediately on startup.
+        // If Kafka is down, Spring will log errors until it connects.
+        factory.setAutoStartup(true);
 
         return factory;
     }

@@ -383,6 +383,7 @@ HTTP Status: **503 Service Unavailable**
 - This is a **configuration error** that prevents message delivery
 - Returns 500 because it's a server-side misconfiguration, not a temporary outage
 - Different from `KAFKA_DOWN` (broker unreachable) or `CIRCUIT_BREAKER_OPEN` (temporary protection)
+- Detected by `KafkaConnectivityService` which continuously monitors topic availability
 
 **Resolution**:
 1. Create the missing topic manually:
@@ -390,10 +391,12 @@ HTTP Status: **503 Service Unavailable**
    docker exec kafka kafka-topics --bootstrap-server localhost:9092 \
      --create --topic orders --partitions 3 --replication-factor 1
    ```
-2. OR enable auto-topic creation in Kafka broker config (not recommended for production):
-   ```properties
-   auto.create.topics.enable=true
-   ```
+2. The `KafkaConnectivityService` will automatically detect the topic once created and update the health status
+
+**Monitoring**:
+- The service continuously monitors topic availability with exponential backoff
+- Health endpoints reflect real-time topic status
+- Check `/cart-service/health/ready` to verify topic is available
 
 **Testing**:
 Use the provided test script: `./scripts/test-missing-topic.sh`

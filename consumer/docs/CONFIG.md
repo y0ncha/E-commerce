@@ -165,7 +165,10 @@ public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerCont
     
     factory.setConsumerFactory(consumerFactory);
     factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
-    factory.setAutoStartup(false);  // Allows Consumer to run without Kafka
+    
+    // UPDATED: Enable auto-startup for immediate consumption
+    // Spring manages the lifecycle, while KafkaConnectivityService monitors health
+    factory.setAutoStartup(true);
     
     return factory;
 }
@@ -589,7 +592,7 @@ docker compose up
 ```
 - **Purpose**: Testing Consumer API independently
 - **Network**: Creates `consumer_default` network
-- **Kafka Connection**: Fails gracefully (autoStartup=false)
+- **Kafka Connection**: Fails gracefully (autoStartup=true)
 - **Health Check**: Shows Kafka as DOWN
 - **API**: Fully functional on port 8082
 - **Message Consumption**: Disabled
@@ -630,10 +633,11 @@ docker restart order-service
 - `LOGGING_LEVEL_MTA_EDA_CONSUMER=DEBUG` - Application debug logs
 
 ### Kafka Listener Behavior
-- **autoStartup=false** in KafkaConsumerConfig allows Consumer to start without Kafka
-- Listeners remain inactive until Kafka connection is established
-- No crashes or exceptions when Kafka is unavailable
-- Enables independent testing and deployment
+- **autoStartup=true** in KafkaConsumerConfig allows Consumer to start immediately
+- Listeners attempt to connect on startup
+- If Kafka is unavailable, Spring logs errors but application stays up
+- KafkaConnectivityService monitors health status independently
+- Enables faster startup and immediate consumption when Kafka is ready
 
 ---
 
@@ -646,5 +650,3 @@ docker restart order-service
 5. **Use `MANUAL_IMMEDIATE` for health** - synchronous and predictable
 6. **Enable debug logging** for the consumer package during development
 7. **Use health checks** for production deployment verification
-
-

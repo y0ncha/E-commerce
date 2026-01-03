@@ -281,6 +281,74 @@ SendResult<String, Order> result = kafkaTemplate.send(topicName, orderId, order)
 
 ---
 
+## Kafka Connectivity Monitoring
+
+The `KafkaConnectivityService` provides **continuous background monitoring** of Kafka broker and topic availability with sophisticated resilience patterns.
+
+### Features
+- **Asynchronous Background Monitoring**: Non-blocking, runs in dedicated thread
+- **Exponential Backoff Retry**: Powered by Resilience4j with intelligent retry intervals
+- **Pre-cached Status**: Instant health check responses (no blocking API calls)
+- **Persistent Retry**: Never gives up - continuously retries until connection restored
+- **Topic Detection**: Specifically detects missing topic vs. broker down scenarios
+
+### Retry Strategy
+The service uses **exponential backoff** with the following characteristics:
+
+**Initial Phase (Fast Recovery):**
+- Starts at **100ms** for aggressive first retries
+- Multiplier: **2x** exponential
+- Retry sequence: 100ms → 200ms → 400ms → 800ms → 1.6s → 3.2s → 5s
+- **Max interval capped at 5 seconds** to keep reconnects responsive
+
+**Steady State:**
+- Once connected and topic ready: checks every **30 seconds**
+- If connection lost: immediately switches back to aggressive retry mode
+- If topic missing: keeps checking every **1 second**
+
+### Topic Auto-Creation Mechanism
+The `KafkaTopicConfig` class defines a `NewTopic` bean that automatically creates the topic on application startup:
+
+```java
+@Bean
+public NewTopic orderEventsTopic(
+    @Value("${kafka.topic.name}") String topicName,
+    @Value("${kafka.topic.partitions:3}") int partitions,
+    @Value("${kafka.topic.replication-factor:1}") short replicationFactor
+) {
+    return TopicBuilder.name(topicName)
+            .partitions(partitions)
+            .replicas(replicationFactor)
+            .build();
+}
+```
+
+**Behavior:**
+- On startup, Spring's `KafkaAdmin` checks if the topic exists
+- If missing, automatically creates it with configured partitions and replication factor
+- If you delete the topic while the app is running, it may be recreated on next health check
+
+**Why This Exists:**
+- Simplifies development setup (no manual topic creation needed)
+- Ensures consistent topic configuration across environments
+- Topic is ready before any messages are published
+
+**To Disable for Testing:**
+Comment out the `@Bean` method in `KafkaTopicConfig.java` if you need to test missing-topic error scenarios.
+
+### Status Detection
+The service maintains three atomic flags:
+- `kafkaConnected`: Broker is reachable and responding
+- `topicReady`: Topic exists and all partitions have leaders
+- `topicNotFound`: Specifically detected that topic doesn't exist (vs. other errors)
+
+### Integration with Health Checks
+- Health endpoints query these cached flags (instant response)
+- No blocking I/O during health check requests
+- Real-time status updates via background monitoring thread
+
+---
+
 ## Message Flow
 
 ### Key Assignment

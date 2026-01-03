@@ -363,7 +363,7 @@ public class KafkaConnectivityService {
         if (!topicReady.get()) {
             return "DEGRADED - Connected to broker but topic '" + topicName + "' not ready";
         }
-        return "UP - Kafka broker and topic '" + topicName + "' ready";
+        return "Kafka broker and topic '" + topicName + "' ready";
     }
 
     /**
