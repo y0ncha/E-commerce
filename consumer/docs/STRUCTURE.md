@@ -1,5 +1,269 @@
 # STRUCTURE.md: Consumer Project Structure
 
+## System Overview
+
+The **Consumer (Order Service)** is responsible for consuming order events from Kafka topics and maintaining order state. It implements key Kafka consumer patterns to ensure **At-Least-Once delivery**, **idempotency**, and **strict sequencing** as required by Exercise 2 of the MTA Event-Driven Architecture course.
+
+### Key Design Principles
+- **Manual Offset Management**: `EnableAutoCommit = false` with `AckMode.MANUAL_IMMEDIATE`
+- **At-Least-Once Delivery**: Offsets committed only after successful processing
+- **Idempotency**: Duplicate message detection using offset tracking
+- **Sequencing**: State machine validation enforces valid status transitions
+- **Resilience**: Graceful handling of deserialization failures and connectivity issues
+
+---
+
+## System Flow
+
+### Consumer Event Flow
+
+The Order Service listens to the `order-events` Kafka topic and processes incoming order events:
+
+#### Kafka Listener Lifecycle: From Polling to Acknowledgment
+
+```
+1. Kafka Consumer Client polls broker (auto-polling every 100ms by default)
+   ├─ Consumer is assigned partitions (e.g., Consumer 1 → Partition 0)
+   ├─ Fetches batch of messages from assigned partitions
+   ↓
+2. Spring Kafka invokes @KafkaListener method for each message
+   ├─ Method: consumeOrder(ConsumerRecord, Acknowledgment)
+   ├─ Extract: orderId (key), payload (value), offset, topic, partition
+   ↓
+3. Deserialization Layer
+   ├─ Parse JSON payload → Order object
+   ├─ Attach topicName metadata for historical tracking
+   ├─ On failure: throw IOException → trigger retry/DLT
+   ↓
+4. Idempotency Check
+   ├─ Query idempotencyMap: has this orderId+offset been processed?
+   ├─ If YES: acknowledge and skip (duplicate from retry)
+   ├─ If NO: proceed to processing
+   ↓
+5. Business Logic Processing (OrderService.processOrder)
+   ├─ Sequencing Validation: check if status transition is valid
+   │  ├─ Valid: CREATED → CONFIRMED → DISPATCHED → DELIVERED
+   │  ├─ Invalid: DISPATCHED → CREATED (reject, log warning)
+   ├─ Duplicate Detection: exact same Order already in state?
+   │  ├─ If YES: skip (idempotent, same status)
+   │  ├─ If NO: calculate shipping cost and update state
+   ├─ State Update: store ProcessedOrder in processedOrderStore map
+   ↓
+6. Mark as Processed
+   ├─ Record orderId+offset in idempotencyMap
+   ├─ Timestamp: when processing completed
+   ↓
+7. Manual Acknowledgment
+   ├─ Call: acknowledgment.acknowledge()
+   ├─ Kafka commits offset immediately (MANUAL_IMMEDIATE mode)
+   ├─ Consumer advances: this message won't be redelivered
+   ↓
+8. Success Logging
+   └─ Log: "✓ Successfully processed order: orderId=..., status=..., topic=..."
+```
+
+**Error Paths:**
+- **Deserialization Failure**: Exception thrown → CommonErrorHandler retries → DLT after max retries
+- **Processing Exception**: Exception thrown → CommonErrorHandler retries → DLT after max retries
+- **No Acknowledgment**: Offset not committed → message redelivered on consumer restart
+
+---
+
+### Message Processing Flow Diagram
+
+```mermaid
+flowchart TD
+    Broker[Kafka Broker<br/>order-events Topic]
+    
+    subgraph Consumer["Order Service (Consumer)"]
+        Poller[Spring Kafka<br/>Auto-Poller]
+        Listener[KafkaConsumerService<br/>@KafkaListener]
+        Deserialize[Deserialization<br/>JSON → Order]
+        Idempotency[Idempotency Check<br/>idempotencyMap]
+        OrderSvc[OrderService<br/>Business Logic]
+        Sequencing[State Machine<br/>Sequencing Validation]
+        Shipping[Shipping Cost<br/>Calculation]
+        StateStore[ProcessedOrder Store<br/>ConcurrentHashMap]
+        Ack[Manual Acknowledgment<br/>acknowledgment.acknowledge()]
+    end
+    
+    Broker -->|Poll every 100ms| Poller
+    Poller -->|ConsumerRecord| Listener
+    Listener -->|payload + metadata| Deserialize
+    
+    Deserialize -->|Order object| Idempotency
+    Deserialize -.->|IOException| ErrorHandler[Error Handler]
+    
+    Idempotency -->|New message| OrderSvc
+    Idempotency -->|Duplicate offset| Ack
+    
+    OrderSvc --> Sequencing
+    Sequencing -->|Valid transition| Shipping
+    Sequencing -.->|Invalid transition| Log[Log Warning<br/>Skip Update]
+    
+    Shipping --> StateStore
+    StateStore --> Ack
+    
+    Log --> Ack
+    
+    ErrorHandler -.->|Retry| Listener
+    ErrorHandler -.->|Max retries exceeded| DLT[Dead Letter Topic]
+    
+    Ack -->|Commit offset| Broker
+    
+    style Listener fill:#e1f5ff
+    style Idempotency fill:#ffe1f5
+    style Sequencing fill:#fff4e1
+    style Ack fill:#e1ffe1
+    style ErrorHandler fill:#ffe1e1
+```
+
+---
+
+## Partition Assignment and Ordering Guarantees
+
+### How Consumers Read from Partitions
+
+```mermaid
+flowchart LR
+    subgraph Kafka["Kafka Broker"]
+        Topic[order-events Topic<br/>3 Partitions]
+        P0[Partition 0<br/>ORD-001, ORD-004]
+        P1[Partition 1<br/>ORD-003, ORD-006]
+        P2[Partition 2<br/>ORD-002, ORD-005]
+    end
+    
+    subgraph ConsumerGroup["Consumer Group: order-service-group"]
+        C1[Consumer Instance 1<br/>Reads P0]
+        C2[Consumer Instance 2<br/>Reads P1]
+        C3[Consumer Instance 3<br/>Reads P2]
+    end
+    
+    Topic --> P0
+    Topic --> P1
+    Topic --> P2
+    
+    P0 -->|Assigned| C1
+    P1 -->|Assigned| C2
+    P2 -->|Assigned| C3
+    
+    style P0 fill:#ffcccc
+    style P1 fill:#ccffcc
+    style P2 fill:#ccccff
+    style C1 fill:#ffcccc
+    style C2 fill:#ccffcc
+    style C3 fill:#ccccff
+```
+
+**Key Principles:**
+
+1. **Partition Assignment**:
+   - Each partition is assigned to exactly ONE consumer instance in the group
+   - If 1 consumer + 3 partitions → consumer reads from all 3 partitions sequentially
+   - If 3 consumers + 3 partitions → each consumer reads from 1 partition (optimal)
+   - If 5 consumers + 3 partitions → 2 consumers are idle (over-provisioning)
+
+2. **Ordering Guarantee**:
+   - **Within a partition**: Messages are consumed in the exact order they were produced (FIFO)
+   - **Across partitions**: No ordering guarantee (messages can be processed concurrently)
+   - **For same orderId**: All events go to the same partition (via message key) → strict ordering
+
+3. **Rebalancing**:
+   - When a consumer joins/leaves, Kafka reassigns partitions
+   - During rebalancing, consumption pauses briefly
+   - After rebalancing, each partition still assigned to exactly one consumer
+
+---
+
+## Listener Lifecycle Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant Broker as Kafka Broker<br/>(Partition 0)
+    participant Poller as Spring Kafka Poller
+    participant Listener as KafkaConsumerService
+    participant Order as OrderService
+    participant State as processedOrderStore
+    participant Ack as Acknowledgment
+
+    Note over Broker: Partition 0 contains:<br/>offset 42: ORD-001 CREATED<br/>offset 43: ORD-001 CONFIRMED
+
+    rect rgb(230, 240, 255)
+        Note right of Poller: Poll Cycle 1
+        Poller->>+Broker: poll() for new messages
+        Broker-->>-Poller: ConsumerRecord(offset=42, key=ORD-001, value=...)
+        
+        Poller->>+Listener: consumeOrder(record, acknowledgment)
+        Listener->>Listener: Extract: orderId="ORD-001", offset=42
+        
+        Listener->>Listener: Deserialize JSON → Order(status=CREATED)
+        
+        Listener->>Listener: Idempotency check (idempotencyMap)
+        Note over Listener: orderId not in map → First time
+        
+        Listener->>+Order: processOrder(order)
+        Order->>Order: Sequencing check: null → CREATED (valid)
+        Order->>Order: Calculate shipping cost: 2% of total
+        Order->>State: Store ProcessedOrder(order, shippingCost)
+        State-->>Order: Stored
+        Order-->>-Listener: Success
+        
+        Listener->>Listener: Record in idempotencyMap: ORD-001 → offset 42
+        
+        Listener->>+Ack: acknowledge()
+        Ack->>Broker: Commit offset 42
+        Broker-->>Ack: Offset committed
+        Ack-->>-Listener: Done
+        
+        Listener-->>-Poller: Processing complete
+        
+        Note over Listener: ✓ Successfully processed ORD-001 CREATED
+    end
+
+    rect rgb(255, 240, 230)
+        Note right of Poller: Poll Cycle 2
+        Poller->>+Broker: poll() for new messages
+        Broker-->>-Poller: ConsumerRecord(offset=43, key=ORD-001, value=...)
+        
+        Poller->>+Listener: consumeOrder(record, acknowledgment)
+        Listener->>Listener: Extract: orderId="ORD-001", offset=43
+        
+        Listener->>Listener: Deserialize JSON → Order(status=CONFIRMED)
+        
+        Listener->>Listener: Idempotency check (idempotencyMap)
+        Note over Listener: offset 43 > last offset 42 → New message
+        
+        Listener->>+Order: processOrder(order)
+        Order->>Order: Sequencing check: CREATED → CONFIRMED (valid)
+        Order->>Order: Calculate shipping cost: 2% of total
+        Order->>State: Update ProcessedOrder(order, shippingCost)
+        State-->>Order: Updated
+        Order-->>-Listener: Success
+        
+        Listener->>Listener: Update idempotencyMap: ORD-001 → offset 43
+        
+        Listener->>+Ack: acknowledge()
+        Ack->>Broker: Commit offset 43
+        Broker-->>Ack: Offset committed
+        Ack-->>-Listener: Done
+        
+        Listener-->>-Poller: Processing complete
+        
+        Note over Listener: ✓ Successfully processed ORD-001 CONFIRMED
+    end
+
+    Note over Broker,State: Result: ORD-001 processed in correct sequence<br/>offset 42 (CREATED) → offset 43 (CONFIRMED)
+```
+
+**Key Observations:**
+1. **Partition-level FIFO**: offset 42 consumed before offset 43
+2. **Manual Acknowledgment**: offset committed only after state update succeeds
+3. **Idempotency**: Each offset tracked to detect redeliveries
+4. **Sequencing**: State machine validates CREATED → CONFIRMED transition
+5. **At-Least-Once**: If consumer crashes before acknowledge(), message redelivered
+
+---
+
 ## Directory Layout
 
 ```
