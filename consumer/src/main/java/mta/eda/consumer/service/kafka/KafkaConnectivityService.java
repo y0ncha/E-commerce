@@ -375,7 +375,7 @@ public class KafkaConnectivityService {
             return "DEGRADED - Connected to broker but listeners not running";
         }
 
-        return "UP - Connected and consuming from topics";
+        return "Connected and consuming from topics";
     }
 
     /**
