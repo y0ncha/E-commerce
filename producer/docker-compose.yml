@@ -1,40 +1,96 @@
+# Producer (Cart Service) with Kafka Infrastructure
+#
+# This compose file includes:
+#   - Zookeeper: Kafka cluster coordination
+#   - Kafka Broker: Message streaming platform
+#   - Cart Service (Producer): Publishes order events to Kafka
+#
+# USAGE:
+#   Start all services: docker compose up -d
+#   Stop all services: docker compose down
+#   View logs: docker compose logs -f [service-name]
+#
+# NETWORK:
+#   Creates 'producer_ecommerce-network' shared by all services
+#   Consumer can join this network to access Kafka
+#
+# PORTS:
+#   9092  - Kafka (external, for host machine access)
+#   8081  - Cart Service (Producer API)
+
 services:
+  # Zookeeper - Kafka cluster coordination service
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.3
-    container_name: kafka-zookeeper
+    container_name: general-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
+    networks:
+      - ecommerce-network
 
+  # Kafka Broker - Message streaming platform
   kafka:
     image: confluentinc/cp-kafka:7.5.3
-    container_name: kafka-broker
+    container_name: general-broker
     depends_on:
       - zookeeper
     ports:
-      - "9092:9092"
+      - "9092:9092"  # External access from host machine
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Two listeners:
+      #   PLAINTEXT://kafka:29092 - Internal Docker network access
+      #   PLAINTEXT_HOST://localhost:9092 - Host machine access
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    networks:
+      - ecommerce-network
 
-  producer:
+  # Cart Service (Producer) - Publishes order events to Kafka
+  cart-service:
     image: y0ncha/eda-producer:2.0.0
-    container_name: eda-producer
+    container_name: cart-service
     depends_on:
       - kafka
     ports:
-      - "8080:8080"
+      - "8081:8081"  # Producer API
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092  # Connect via internal Docker network
+      KAFKA_TOPIC: orders
+      LOGGING_LEVEL_ROOT: INFO
+      LOGGING_LEVEL_MTA_EDA_PRODUCER: DEBUG
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/cart-service/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:8081/cart-service/health/live"]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 20s
+    networks:
+      - ecommerce-network
+    restart: unless-stopped
+
+  # Kafka UI for better monitoring and debugging
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"  # Fixed: Access Kafka UI at http://localhost:8080
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    networks:
+      - ecommerce-network
+    depends_on:
+      - kafka
+
+# Shared network for all Producer services
+# Consumer can join this network to access Kafka
+networks:
+  ecommerce-network:
+    driver: bridge

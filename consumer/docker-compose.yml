@@ -1,0 +1,59 @@
+# Consumer (Order Service) - Kafka message consumer
+#
+# This compose file includes:
+#   - Order Service (Consumer): Consumes order events from Kafka
+#
+# DEPLOYMENT MODES:
+#
+# 1. STANDALONE MODE (without Kafka - for testing):
+#    docker compose up
+#    - Consumer starts successfully (autoStartup=false allows this)
+#    - API endpoints available on port 8082
+#    - Health check shows Kafka as DOWN
+#    - No message consumption (Kafka listeners disabled)
+#    - Creates its own 'consumer_default' network
+#
+# 2. INTEGRATED MODE (with Producer's Kafka):
+#    Step 1: Start Producer first
+#      cd ../producer && docker compose up -d
+#    Step 2: Start Consumer
+#      cd ../consumer && docker compose up -d
+#    - Consumer automatically connects to 'producer_ecommerce-network'
+#    - Consumer can resolve 'kafka:29092' via Docker DNS
+#    - Health check shows Kafka as UP
+#    - Kafka listeners start consuming messages
+#
+# PORTS:
+#   8082  - Order Service (Consumer API)
+
+services:
+  # Order Service (Consumer) - Processes order events from Kafka
+  order-service:
+    image: y0ncha/eda-consumer:2.0.0
+    container_name: order-service
+    ports:
+      - "8082:8082"  # Consumer API
+    environment:
+      # Connect to Kafka in Producer's network using service name
+      # When connected to producer_ecommerce-network: resolves to Kafka broker
+      # When standalone: DNS won't resolve but app still starts (autoStartup=false)
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_KAFKA_CONSUMER_GROUP_ID: order-service-group
+      KAFKA_TOPIC: orders
+      LOGGING_LEVEL_ROOT: INFO
+      LOGGING_LEVEL_MTA_EDA_CONSUMER: DEBUG
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8082/order-service/health/live" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - default
+      - producer-net
+
+networks:
+  producer-net:
+    external: true
+    name: producer_ecommerce-network

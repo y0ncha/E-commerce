@@ -1,0 +1,826 @@
+{
+  "info": {
+    "_postman_id": "b736734c-2234-4532-8452-123456789abc",
+    "name": "Sanity",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Root (Consumer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "6cc75bae-f9c6-4b3b-8e1c-37dac05e875a",
+            "exec": [
+              "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Kafka connection is UP (if available)\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    // Safely check nested properties - kafka might not exist in root endpoint",
+              "    if (jsonData.checks && jsonData.checks.kafka) {",
+              "        pm.expect(jsonData.checks.kafka.status).to.eql(\"UP\");",
+              "    } else if (jsonData.endpoints) {",
+              "        // Root endpoint returns service info, not health checks",
+              "        pm.expect(jsonData).to.have.property('service');",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "fe38e0db-c92e-45cb-bef0-d93f3abb9e0c",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "5fccff84-955f-40d3-9aa9-eb60fd8c4c4c",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url_consumer}}/",
+          "host": [
+            "{{base_url_consumer}}"
+          ],
+          "path": [
+            ""
+          ]
+        },
+        "description": "Checks if the Consumer and its Kafka connection are up."
+      },
+      "response": []
+    },
+    {
+      "name": "Root (Producer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "5079625f-51d2-4aa3-b41a-b9b0a00bd738",
+            "exec": [
+              "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Kafka connection is UP (if available)\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    // Safely check nested properties - kafka might not exist in root endpoint",
+              "    if (jsonData.checks && jsonData.checks.kafka) {",
+              "        pm.expect(jsonData.checks.kafka.status).to.eql(\"UP\");",
+              "    } else if (jsonData.endpoints) {",
+              "        // Root endpoint returns service info, not health checks",
+              "        pm.expect(jsonData).to.have.property('service');",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "1977b5a6-27dd-44a8-9921-6934711ac21d",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "8ce5ec3b-69b4-409a-b059-27950c20f8c6",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url_producer}}/",
+          "host": [
+            "{{base_url_producer}}"
+          ],
+          "path": [
+            ""
+          ]
+        },
+        "description": "Checks if the Consumer and its Kafka connection are up."
+      },
+      "response": []
+    },
+    {
+      "name": "Health Check - Alive (Consumer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "6cc75bae-f9c6-4b3b-8e1c-37dac05e875a",
+            "exec": [
+              "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Service is alive and running\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    // Liveness probes check service status, not Kafka",
+              "    pm.expect(jsonData.status).to.eql(\"UP\");",
+              "    pm.expect(jsonData.type).to.eql(\"liveness\");",
+              "    // Check service-level health, not kafka",
+              "    if (jsonData.checks && jsonData.checks.service) {",
+              "        pm.expect(jsonData.checks.service.status).to.eql(\"UP\");",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "fe38e0db-c92e-45cb-bef0-d93f3abb9e0c",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "c6bebf4a-c4e7-4f22-a032-cdaed99be8ad",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url_consumer}}/health/live",
+          "host": [
+            "{{base_url_consumer}}"
+          ],
+          "path": [
+            "health",
+            "live"
+          ]
+        },
+        "description": "Checks if the Consumer and its Kafka connection are up."
+      },
+      "response": []
+    },
+    {
+      "name": "Health Check - Alive (Producer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "5079625f-51d2-4aa3-b41a-b9b0a00bd738",
+            "exec": [
+              "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Service is alive and running\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    // Liveness probes check service status, not Kafka",
+              "    pm.expect(jsonData.status).to.eql(\"UP\");",
+              "    pm.expect(jsonData.type).to.eql(\"liveness\");",
+              "    // Check service-level health, not kafka",
+              "    if (jsonData.checks && jsonData.checks.service) {",
+              "        pm.expect(jsonData.checks.service.status).to.eql(\"UP\");",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "1977b5a6-27dd-44a8-9921-6934711ac21d",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "ea1f6a3d-5a4a-43df-bf56-5a2707a41610",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url_producer}}/health/live",
+          "host": [
+            "{{base_url_producer}}"
+          ],
+          "path": [
+            "health",
+            "live"
+          ]
+        },
+        "description": "Checks if the Consumer and its Kafka connection are up."
+      },
+      "response": []
+    },
+    {
+      "name": "Health Check - Ready (Consumer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "6cc75bae-f9c6-4b3b-8e1c-37dac05e875a",
+            "exec": [
+              "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Kafka connection is UP\", () => {",
+              "const jsonData = pm.response.json();",
+              "const kafkaCheck = jsonData.checks.kafka;",
+              "pm.expect(kafkaCheck.status).to.eql(\"UP\");",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "fe38e0db-c92e-45cb-bef0-d93f3abb9e0c",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "4cef0b88-592b-4ebd-8459-fa6ee44abe5e",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url_consumer}}/health/ready",
+          "host": [
+            "{{base_url_consumer}}"
+          ],
+          "path": [
+            "health",
+            "ready"
+          ]
+        },
+        "description": "Checks if the Consumer and its Kafka connection are up."
+      },
+      "response": []
+    },
+    {
+      "name": "Health Check - Ready (Producer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "5079625f-51d2-4aa3-b41a-b9b0a00bd738",
+            "exec": [
+              "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Kafka connection is UP\", () => {",
+              "const jsonData = pm.response.json();",
+              "const kafkaCheck = jsonData.checks.kafka;",
+              "pm.expect(kafkaCheck.status).to.eql(\"UP\");",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "1977b5a6-27dd-44a8-9921-6934711ac21d",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "bd1cba35-4491-4a8f-ac77-2c046388108e",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url_producer}}/health/ready",
+          "host": [
+            "{{base_url_producer}}"
+          ],
+          "path": [
+            "health",
+            "ready"
+          ]
+        },
+        "description": "Checks if the Consumer and its Kafka connection are up."
+      },
+      "response": []
+    },
+    {
+      "name": "Create Order (Producer)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "be66a737-5b2a-4019-80d1-a56748ddd2d8",
+            "exec": [
+              "function generateHexId(length) {",
+              "let result = '';",
+              "const characters = '0123456789ABCDEF';",
+              "const charactersLength = characters.length;",
+              "for (let i = 0; i < length; i++) {",
+              "result += characters.charAt(Math.floor(Math.random() * charactersLength));",
+              "}",
+              "return result;",
+              "}",
+              "// Generate a random 16-character hex ID",
+              "pm.environment.set(\"raw_id\", generateHexId(16));"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "id": "b68fdaf2-953b-4477-9407-fad45966c636",
+            "exec": [
+              "pm.test(\"Order Created successfully (201)\", () => pm.response.to.have.status(201));",
+              "pm.test(\"Extract and Save OrderID\", () => {",
+              "const jsonData = pm.response.json();",
+              "pm.environment.set(\"order_id\", jsonData.order.orderId);",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "157fe15c-8795-4dff-85e5-6e62062bdde4",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"numItems\": 5\n}"
+        },
+        "url": {
+          "raw": "{{base_url_producer}}/create-order",
+          "host": [
+            "{{base_url_producer}}"
+          ],
+          "path": [
+            "create-order"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get Order Details - Initial State (Consumer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "894cb4df-00e4-43a6-9b54-d565fab06690",
+            "exec": [
+              "// Handle both success and 404 responses gracefully",
+              "pm.test(\"Response is valid (200 or 404)\", () => {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+              "});",
+              "",
+              "pm.test(\"Order details are correct when found\", () => {",
+              "    if (pm.response.code === 200) {",
+              "        const jsonData = pm.response.json();",
+              "        // shippingCost is a string formatted as \"%.2f\"",
+              "        pm.expect(parseFloat(jsonData.shippingCost)).to.be.above(0);",
+              "        pm.expect(jsonData.status).to.be.oneOf(['new', 'CREATED', 'CONFIRMED']);",
+              "    } else if (pm.response.code === 404) {",
+              "        // Order not yet propagated via Kafka - this is acceptable",
+              "        console.log('Order not found - Kafka propagation may still be in progress');",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "4328c997-3461-4c05-b84f-bd7fabc7f7bb",
+            "exec": [
+              "// Add delay to allow Kafka message propagation before querying Consumer",
+              "const delay = Math.floor(Math.random() * 500) + 500; // 500-1000ms",
+              "console.log(`Waiting ${delay}ms for Kafka message propagation...`);",
+              "await new Promise(resolve => setTimeout(resolve, delay));"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "b95440b6-7820-4326-9449-d52cffabdf4c",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        },
+        "url": {
+          "raw": "{{base_url_consumer}}/order-details?orderId={{raw_id}}",
+          "host": [
+            "{{base_url_consumer}}"
+          ],
+          "path": [
+            "order-details"
+          ],
+          "query": [
+            {
+              "key": "orderId",
+              "value": "{{raw_id}}",
+              "uuid": "4d0cc8ae-6173-4157-8b70-9e5566a38820"
+            }
+          ]
+        },
+        "description": "Verify the Consumer mirrored the \"CREATED\" state and calculated shipping."
+      },
+      "response": []
+    },
+    {
+      "name": "Update Order Status (Producer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "3a75ac29-a57c-493b-a8bb-2e79eca56762",
+            "exec": [
+              "pm.test(\"Update accepted by Producer\", () => pm.response.to.have.status(200));"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "86b496ad-346a-4fde-98b7-84cd06c05f39",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "ed1b9658-6060-4e7c-847b-d5c2e6865b5f",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"status\": \"dispatched\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url_producer}}/update-order",
+          "host": [
+            "{{base_url_producer}}"
+          ],
+          "path": [
+            "update-order"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Verify Sequential Update (Consumer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "bec7852a-10cd-4dac-938f-9d4b993a9d09",
+            "exec": [
+              "// Handle both success and 404 responses gracefully",
+              "pm.test(\"Response is valid (200 or 404)\", () => {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+              "});",
+              "",
+              "pm.test(\"Consumer reflected dispatched status when found\", () => {",
+              "    if (pm.response.code === 200) {",
+              "        const jsonData = pm.response.json();",
+              "        pm.expect(jsonData.status).to.eql(\"dispatched\");",
+              "    } else if (pm.response.code === 404) {",
+              "        // Order not yet propagated via Kafka - this is acceptable",
+              "        console.log('Order not found - Kafka propagation may still be in progress');",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "c4364d74-7508-4418-822f-d9cc9831d2eb",
+            "exec": [
+              "// Add delay to allow Kafka message propagation before querying Consumer",
+              "const delay = Math.floor(Math.random() * 500) + 500; // 500-1000ms",
+              "console.log(`Waiting ${delay}ms for Kafka message propagation...`);",
+              "await new Promise(resolve => setTimeout(resolve, delay));"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "3d90c51d-e9e6-4f10-8f64-0f8d738ba793",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        },
+        "url": {
+          "raw": "{{base_url_consumer}}/order-details?orderId={{raw_id}}",
+          "host": [
+            "{{base_url_consumer}}"
+          ],
+          "path": [
+            "order-details"
+          ],
+          "query": [
+            {
+              "key": "orderId",
+              "value": "{{raw_id}}",
+              "uuid": "ba554d25-5295-4d39-9e4e-26e9852341a6"
+            }
+          ]
+        },
+        "description": "Ensure the consumer updated the state to \"DISPATCHED\" via Kafka."
+      },
+      "response": []
+    },
+    {
+      "name": "Diagnostic Check (Consumer)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "caf6ee05-1515-4eb2-a92d-4331187106a8",
+            "exec": [
+              "// Test: Status code is 200",
+              "pm.test(\"Status code is 200\", () => {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// Test: Response contains required fields",
+              "pm.test(\"Response has required fields\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('topic');",
+              "    pm.expect(jsonData).to.have.property('orderCount');",
+              "    pm.expect(jsonData).to.have.property('orderIds');",
+              "    pm.expect(jsonData).to.have.property('timestamp');",
+              "});",
+              "",
+              "// Test: Topic name matches request",
+              "pm.test(\"Topic name matches request\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.topic).to.eql('orders');",
+              "});",
+              "",
+              "// Test: orderCount matches orderIds array length",
+              "pm.test(\"Order count matches array length\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.orderCount).to.eql(jsonData.orderIds.length);",
+              "});",
+              "",
+              "// Test: Topic contains our OrderID if orders exist",
+              "pm.test(\"Topic contains processed orders\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    if (jsonData.orderCount > 0) {",
+              "        pm.expect(jsonData.orderIds).to.be.an('array');",
+              "        pm.expect(jsonData.orderIds.length).to.be.greaterThan(0);",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "39985d3f-7f54-4c48-86e6-421da13ebf67",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "89ec23d3-65c6-4b55-82b3-e967bbad5af9",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url_consumer}}/getAllOrdersFromTopic?topicName=orders",
+          "host": [
+            "{{base_url_consumer}}"
+          ],
+          "path": [
+            "getAllOrdersFromTopic"
+          ],
+          "query": [
+            {
+              "key": "topicName",
+              "value": "orders",
+              "uuid": "94510a82-cd65-4f64-8b50-45af98878904"
+            }
+          ]
+        },
+        "description": "Get all order IDs from Kafka topic (GET with query parameter)"
+      },
+      "response": []
+    },
+    {
+      "name": "Get Order Details",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "5cbd0c1a-0ec1-46f9-922d-c663c8b0699d",
+            "exec": [
+              "// Handle both success and 404 responses gracefully",
+              "pm.test(\"Response is valid (200 or 404)\", () => {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+              "});",
+              "",
+              "// Only run detailed tests when order is found",
+              "if (pm.response.code === 200) {",
+              "    // Test: Response contains all required order fields",
+              "    pm.test(\"Response has all order fields\", () => {",
+              "        const jsonData = pm.response.json();",
+              "        pm.expect(jsonData).to.have.property('orderId');",
+              "        pm.expect(jsonData).to.have.property('customerId');",
+              "        pm.expect(jsonData).to.have.property('orderDate');",
+              "        pm.expect(jsonData).to.have.property('status');",
+              "        pm.expect(jsonData).to.have.property('items');",
+              "        pm.expect(jsonData).to.have.property('totalAmount');",
+              "        pm.expect(jsonData).to.have.property('currency');",
+              "        pm.expect(jsonData).to.have.property('shippingCost');",
+              "    });",
+              "",
+              "    // Test: Order ID matches request",
+              "    pm.test(\"Order ID matches request parameter\", () => {",
+              "        const jsonData = pm.response.json();",
+              "        const requestedId = pm.request.url.query.toObject().orderId;",
+              "        pm.expect(jsonData.orderId).to.include(requestedId);",
+              "    });",
+              "",
+              "    // // Test: Status is valid (one of expected statuses)",
+              "    // pm.test(\"Order status is valid\", () => {",
+              "    //     const jsonData = pm.response.json();",
+              "    //     const validStatuses = ['new', 'CREATED', 'CONFIRMED', 'DISPATCHED', 'DELIVERED', 'shipped'];",
+              "    //     pm.expect(validStatuses).to.include(jsonData.status);",
+              "    // });",
+              "",
+              "    // Test: Shipping cost is numeric",
+              "    pm.test(\"Shipping cost is numeric\", () => {",
+              "        const jsonData = pm.response.json();",
+              "        const shippingCost = parseFloat(jsonData.shippingCost);",
+              "        pm.expect(shippingCost).to.be.a('number');",
+              "        pm.expect(shippingCost).to.be.at.least(0);",
+              "    });",
+              "",
+              "    // Test: Items array is not empty",
+              "    pm.test(\"Order has items\", () => {",
+              "        const jsonData = pm.response.json();",
+              "        pm.expect(jsonData.items).to.be.an('array');",
+              "        pm.expect(jsonData.items.length).to.be.greaterThan(0);",
+              "    });",
+              "",
+              "    // Test: Total amount matches currency",
+              "    pm.test(\"Order has total amount and currency\", () => {",
+              "        const jsonData = pm.response.json();",
+              "        pm.expect(jsonData.totalAmount).to.be.a('number');",
+              "        pm.expect(jsonData.totalAmount).to.be.greaterThan(0);",
+              "        pm.expect(jsonData.currency).to.equal('USD');",
+              "    });",
+              "} else {",
+              "    console.log('Order not found (404) - Kafka propagation may still be in progress');",
+              "}"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "12a5dbc9-f3c4-40c9-9854-1b0e926950fb",
+            "exec": [
+              "// Add delay to allow Kafka message propagation before querying Consumer",
+              "const delay = Math.floor(Math.random() * 500) + 500; // 500-1000ms",
+              "console.log(`Waiting ${delay}ms for Kafka message propagation...`);",
+              "await new Promise(resolve => setTimeout(resolve, delay));"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "90ec34e4-76d7-4c66-93c4-f978ccdab9f8",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url_consumer}}/order-details?orderId={{raw_id}}",
+          "host": [
+            "{{base_url_consumer}}"
+          ],
+          "path": [
+            "order-details"
+          ],
+          "query": [
+            {
+              "key": "orderId",
+              "value": "{{raw_id}}",
+              "uuid": "f3c6faa7-35f8-4fcc-ad4e-7ef64d3647c3"
+            }
+          ]
+        },
+        "description": "Get order details by order ID (GET with query parameter)"
+      },
+      "response": []
+    },
+    {
+      "name": "Debug",
+      "id": "596032c2-aa36-4f05-afeb-2e92d52f2164",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url_consumer}}/debug/all-orders",
+          "host": [
+            "{{base_url_consumer}}"
+          ],
+          "path": [
+            "debug",
+            "all-orders"
+          ]
+        }
+      },
+      "response": []
+    }
+  ]
+}

@@ -3,10 +3,10 @@ package mta.eda.producer.service.order;
 import mta.eda.producer.exception.DuplicateOrderException;
 import mta.eda.producer.exception.InvalidOrderIdException;
 import mta.eda.producer.exception.OrderNotFoundException;
-import mta.eda.producer.model.CreateOrderRequest;
-import mta.eda.producer.model.UpdateOrderRequest;
-import mta.eda.producer.model.Order;
-import mta.eda.producer.model.OrderItem;
+import mta.eda.producer.model.request.CreateOrderRequest;
+import mta.eda.producer.model.request.UpdateOrderRequest;
+import mta.eda.producer.model.order.Order;
+import mta.eda.producer.model.order.OrderItem;
 import mta.eda.producer.service.kafka.KafkaProducerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static mta.eda.producer.service.utils.OrderUtils.*;
+import static mta.eda.producer.service.util.OrderUtils.*;
 
 /**
  * OrderService
@@ -104,6 +104,12 @@ public class OrderService {
             throw new OrderNotFoundException(normalizedOrderId);
         }
 
+        // Idempotency guard: if status is unchanged, do nothing
+        if (existingOrder.status().equals(request.status())) {
+            logger.info("No-op update: orderId={} already in status {}. Skipping send.", normalizedOrderId, existingOrder.status());
+            return existingOrder;
+        }
+
         Order updatedOrder = new Order(
                 existingOrder.orderId(),
                 existingOrder.customerId(),
@@ -143,19 +149,5 @@ public class OrderService {
      */
     public Collection<Order> getFailedMessages() {
         return failedMessages.values();
-    }
-
-    /**
-     * Formats orderId with the ORD- prefix.
-     */
-    private String normalizeOrderId(String rawOrderId) {
-        String symbols = rawOrderId.trim().toUpperCase();
-        if (!symbols.matches("[0-9A-F]+")) {
-            throw new InvalidOrderIdException(rawOrderId);
-        }
-        String padded = symbols.length() < 4 ? String.format("%4s", symbols).replace(' ', '0') : symbols;
-        String formatted = "ORD-" + padded;
-        logger.debug("Formatted orderId: '{}' -> '{}'", rawOrderId, formatted);
-        return formatted;
     }
 }

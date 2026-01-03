@@ -1,8 +1,8 @@
 package mta.eda.producer.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import mta.eda.producer.model.CreateOrderRequest;
-import mta.eda.producer.model.UpdateOrderRequest;
+import mta.eda.producer.model.request.CreateOrderRequest;
+import mta.eda.producer.model.request.UpdateOrderRequest;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;

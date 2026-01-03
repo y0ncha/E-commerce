@@ -1,6 +1,6 @@
-package mta.eda.producer.service.kafka;
+package mta.eda.producer.service.general;
 
-import mta.eda.producer.model.HealthCheck;
+import mta.eda.producer.model.response.HealthCheck;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
@@ -19,14 +19,14 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 /**
- * KafkaHealthService
+ * HealthService
  * Performs readiness checks against Kafka.
  * Designed to be safe for HTTP endpoints (short timeouts + caching).
  */
 @Service
-public class KafkaHealthService {
+public class HealthService {
 
-    private static final Logger logger = LoggerFactory.getLogger(KafkaHealthService.class);
+    private static final Logger logger = LoggerFactory.getLogger(HealthService.class);
 
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;

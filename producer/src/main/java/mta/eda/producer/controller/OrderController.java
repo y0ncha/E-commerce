@@ -1,12 +1,12 @@
 package mta.eda.producer.controller;
 
 import jakarta.validation.Valid;
-import mta.eda.producer.model.CreateOrderRequest;
-import mta.eda.producer.model.HealthCheck;
-import mta.eda.producer.model.HealthResponse;
-import mta.eda.producer.model.Order;
-import mta.eda.producer.model.UpdateOrderRequest;
-import mta.eda.producer.service.kafka.KafkaHealthService;
+import mta.eda.producer.model.request.CreateOrderRequest;
+import mta.eda.producer.model.response.HealthCheck;
+import mta.eda.producer.model.response.HealthResponse;
+import mta.eda.producer.model.order.Order;
+import mta.eda.producer.model.request.UpdateOrderRequest;
+import mta.eda.producer.service.general.HealthService;
 import mta.eda.producer.service.order.OrderService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,11 +29,11 @@ public class OrderController {
     private static final Logger logger = LoggerFactory.getLogger(OrderController.class);
 
     private final OrderService orderService;
-    private final KafkaHealthService kafkaHealthService;
+    private final HealthService healthService;
 
-    public OrderController(OrderService orderService, KafkaHealthService kafkaHealthService) {
+    public OrderController(OrderService orderService, HealthService healthService) {
         this.orderService = orderService;
-        this.kafkaHealthService = kafkaHealthService;
+        this.healthService = healthService;
     }
 
     /**
@@ -44,8 +44,7 @@ public class OrderController {
         logger.debug("Root endpoint accessed");
 
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("service", "Producer (Cart Service)");
-        response.put("version", "0.0.1-SNAPSHOT");
+        response.put("service", "Cart Service (Producer)");
         response.put("timestamp", Instant.now().toString());
 
         Map<String, Object> endpoints = new LinkedHashMap<>();
@@ -88,7 +87,8 @@ public class OrderController {
      */
     @GetMapping("/health/live")
     public ResponseEntity<HealthResponse> live() {
-        HealthCheck serviceStatus = kafkaHealthService.getServiceStatus();
+        logger.debug("Liveness probe called");
+        HealthCheck serviceStatus = healthService.getServiceStatus();
         Map<String, HealthCheck> checks = Map.of("service", serviceStatus);
         HealthResponse response = new HealthResponse("Producer (Cart Service)", "liveness", "UP", Instant.now().toString(), checks);
         return ResponseEntity.ok(response);
@@ -99,8 +99,9 @@ public class OrderController {
      */
     @GetMapping("/health/ready")
     public ResponseEntity<HealthResponse> ready() {
-        HealthCheck serviceStatus = kafkaHealthService.getServiceStatus();
-        HealthCheck kafkaStatus = kafkaHealthService.getKafkaStatus();
+        logger.debug("Readiness probe called");
+        HealthCheck serviceStatus = healthService.getServiceStatus();
+        HealthCheck kafkaStatus = healthService.getKafkaStatus();
         boolean isKafkaUp = "UP".equals(kafkaStatus.status());
         String overallStatus = isKafkaUp ? "UP" : "DOWN";
         Map<String, HealthCheck> checks = Map.of("service", serviceStatus, "kafka", kafkaStatus);

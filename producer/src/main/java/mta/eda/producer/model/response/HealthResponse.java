@@ -1,4 +1,4 @@
-package mta.eda.producer.model;
+package mta.eda.producer.model.response;
 
 import java.util.Map;
 

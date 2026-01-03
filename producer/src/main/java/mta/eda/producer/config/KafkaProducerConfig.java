@@ -1,6 +1,6 @@
 package mta.eda.producer.config;
 
-import mta.eda.producer.model.Order;
+import mta.eda.producer.model.order.Order;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -60,7 +60,7 @@ public class KafkaProducerConfig {
     @Value("${spring.kafka.producer.properties.enable.idempotence:false}")
     private boolean enableIdempotence;
 
-    @Value("${spring.kafka.producer.client-id:eda-producer}")
+    @Value("${spring.general.producer.client-id:eda-producer}")
     private String clientId;
 
     /**
