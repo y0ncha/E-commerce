@@ -2,6 +2,23 @@
 
 Complete reference for all configuration properties in the Producer (Cart Service).
 
+This document explains the Kafka-specific configurations that enable **strict ordering**, **reliability**, and **resilience** as required by Exercise 2.
+
+---
+
+## Kafka Configuration Strategy
+
+The Producer is configured to satisfy three critical requirements:
+
+1. **Strict Ordering**: Events for the same order must be processed in sequence
+   - **Solution**: Use `orderId` as the message key for partition affinity
+   
+2. **At-Least-Once Delivery**: No order events should be lost
+   - **Solution**: `acks=all`, `enable.idempotence=true`, retry configuration
+   
+3. **Resilience**: Handle broker unavailability gracefully
+   - **Solution**: Circuit Breaker pattern, health monitoring, retry with exponential backoff
+
 ---
 
 ## Application Settings
@@ -117,13 +134,122 @@ Complete reference for all configuration properties in the Producer (Cart Servic
 
 - `kafka.topic.name=order-events`
   - **Purpose:** Topic name for all order events
+  - **Why This Name:** Descriptive name indicating event-driven architecture
+  
 - `kafka.topic.partitions=3`
   - **Purpose:** Number of partitions for parallel processing
-  - **Recommendation:** >= number of consumer instances for parallelism
+  - **Course Requirement:** Multiple partitions demonstrate message keying importance
+  - **Scalability:** Enables parallel consumption by multiple consumer instances
+  - **Ordering Guarantee:** Each partition maintains strict FIFO ordering
+  - **Recommendation:** >= number of consumer instances for optimal parallelism
+  - **Trade-off:** 
+    - More partitions = higher throughput + more parallelism
+    - More partitions = higher resource overhead (broker memory, file handles)
+  
 - `kafka.topic.replication-factor=1`
   - **Purpose:** Number of replicas per partition
   - **Current Setup:** 1 (Single broker development environment)
-  - **Note:** In production, this should be set to 3 for high availability.
+  - **Production Recommendation:** 3 replicas for high availability
+  - **Durability:** With `acks=all`, producer waits for all replicas to acknowledge
+  - **Note:** In production, use replication-factor >= 3 to survive broker failures
+
+### Message Keying and Partitioning Strategy
+
+**The Core Pattern:**
+```
+orderId (Message Key) → Kafka Partitioning → Same Partition → Ordered Processing
+```
+
+**How It Works:**
+
+1. **Producer Side:**
+   ```java
+   kafkaTemplate.send(topicName, orderId, order)
+                           //    ↑ Message Key
+   ```
+
+2. **Kafka Partitioning Algorithm:**
+   ```
+   partition = murmur2(orderId) % num_partitions
+   ```
+   - Uses MurmurHash2 algorithm (deterministic hash function)
+   - Same orderId always produces the same hash value
+   - Hash modulo num_partitions determines target partition
+
+3. **Partition Assignment:**
+   ```
+   Example with 3 partitions:
+   
+   ORD-001 → hash=12345 → 12345 % 3 = 0 → Partition 0
+   ORD-001 → hash=12345 → 12345 % 3 = 0 → Partition 0 (always!)
+   ORD-002 → hash=67890 → 67890 % 3 = 2 → Partition 2
+   ORD-002 → hash=67890 → 67890 % 3 = 2 → Partition 2 (always!)
+   ```
+
+4. **Ordering Guarantee:**
+   - All messages with key="ORD-001" land in Partition 0
+   - Partition 0 maintains FIFO order: offset 10, 11, 12, ...
+   - Consumer reading Partition 0 receives messages in exact write order
+   - **Result:** ORD-001 events are processed in sequence (CREATED → CONFIRMED → DISPATCHED)
+
+**Why Multiple Partitions with Message Keying:**
+
+| Aspect | Single Partition | Multiple Partitions with Keys |
+|--------|------------------|------------------------------|
+| **Ordering** | Global ordering (all messages) | Per-key ordering (messages with same key) |
+| **Throughput** | Limited by single partition write speed | Scales linearly with partitions |
+| **Parallelism** | Only 1 consumer can read | Multiple consumers can read (1 per partition) |
+| **Scalability** | Cannot scale beyond 1 consumer | Scales to N consumers (N = partitions) |
+| **Use Case** | When global order is required | When per-entity order is sufficient (our case) |
+
+**Our Scenario:**
+- **Requirement:** Order ORD-001's events must be in order
+- **Not Required:** ORD-001 and ORD-002 events to be in global order
+- **Solution:** 3 partitions + orderId as key
+  - ORD-001 events → Partition 0 (ordered)
+  - ORD-002 events → Partition 2 (ordered)
+  - ORD-003 events → Partition 1 (ordered)
+  - **Result:** 3x throughput, per-order ordering maintained
+
+**Interaction with Consumer:**
+```
+Producer (3 partitions)          Consumer (3 instances)
+  ↓                                ↓
+Partition 0 (ORD-001, ORD-004) → Consumer Instance 1
+Partition 1 (ORD-003, ORD-006) → Consumer Instance 2
+Partition 2 (ORD-002, ORD-005) → Consumer Instance 3
+```
+- Each consumer instance reads from 1 partition
+- Within each instance, messages are processed in order
+- Different orders processed in parallel across instances
+- **Horizontal Scalability:** Add more partitions + consumers for higher throughput
+
+---
+
+## Producer Configuration - KafkaTemplate
+
+The Producer uses Spring's `KafkaTemplate` for message publishing:
+
+```java
+@Bean
+public KafkaTemplate<String, Order> kafkaTemplate(ProducerFactory<String, Order> producerFactory) {
+    return new KafkaTemplate<>(producerFactory);
+}
+```
+
+**Key Features:**
+- **Type Safety:** `<String, Order>` ensures compile-time type checking
+  - String = orderId (message key)
+  - Order = order object (message value)
+- **Serialization:** Automatically serializes Order objects to JSON
+- **Synchronous Send:** `.send().get(timeout)` blocks until ACK or timeout
+- **Error Handling:** Throws exceptions on failure (caught by Circuit Breaker)
+
+**Usage in KafkaProducerService:**
+```java
+SendResult<String, Order> result = kafkaTemplate.send(topicName, orderId, order)
+    .get(sendTimeoutMs, TimeUnit.MILLISECONDS);
+```
 
 ---
 

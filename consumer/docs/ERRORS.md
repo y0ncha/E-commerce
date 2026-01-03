@@ -2,6 +2,57 @@
 
 The Consumer (Order Service) implements a comprehensive error handling strategy across the **Message Processing Layer**, **State Management Layer**, and **Business Logic Layer** to ensure reliability, idempotency, and consistency in distributed event processing.
 
+**Course Context**: This error handling strategy aligns with **Session 8 - Error Handling & Resilience** from the MTA Event-Driven Architecture course, implementing patterns for idempotency, retry logic, and Dead Letter Topics.
+
+---
+
+## Error Handling Architecture Overview
+
+```mermaid
+flowchart TD
+    Kafka[Kafka Broker<br/>order-events Topic]
+    
+    subgraph Consumer["Order Service Consumer"]
+        Listener[KafkaConsumerService<br/>@KafkaListener]
+        Deserialize{Deserialization<br/>JSON → Order}
+        Idempotency{Idempotency Check<br/>Duplicate?}
+        Sequencing{Sequencing Check<br/>Valid Transition?}
+        Processing[Business Logic<br/>Calculate & Store]
+        Ack[Manual Acknowledgment<br/>Commit Offset]
+    end
+    
+    ErrorHandler[CommonErrorHandler<br/>Retry with Backoff]
+    DLT[Dead Letter Topic<br/>Failed Messages]
+    
+    Kafka -->|Poll messages| Listener
+    Listener --> Deserialize
+    
+    Deserialize -->|Success| Idempotency
+    Deserialize -.->|IOException| ErrorHandler
+    
+    Idempotency -->|New message| Sequencing
+    Idempotency -->|Duplicate offset| Ack
+    
+    Sequencing -->|Valid| Processing
+    Sequencing -->|Invalid| LogWarn[Log Warning<br/>Preserve State]
+    
+    Processing --> Ack
+    Processing -.->|Exception| ErrorHandler
+    
+    LogWarn --> Ack
+    
+    ErrorHandler -.->|Retry 1-3| Listener
+    ErrorHandler -.->|Max retries| DLT
+    
+    Ack -->|Commit offset| Kafka
+    
+    style Deserialize fill:#ffe1e1
+    style Idempotency fill:#fff4e1
+    style Sequencing fill:#e1f5ff
+    style ErrorHandler fill:#ffe1e1
+    style DLT fill:#ffcccc
+```
+
 ---
 
 ## 1. Message Reception & Deserialization Errors (The "Gate Keeper" Layer)
@@ -36,66 +87,427 @@ These errors occur when messages arrive from Kafka but fail to be converted into
 
 These mechanisms prevent duplicate processing and enforce valid state transitions, ensuring the consumer acts as a reliable mirror of the producer's state.
 
-### Level 1: Idempotency Check (Duplicate Detection)
-- **Mechanism**: `OrderService.processOrder()` performs an **exact equality check** on the incoming `Order` against the current stored `ProcessedOrder`.
-- **Implementation**:
-  ```java
-  if (current != null && current.order().equals(order)) {
-      logger.info("Duplicate event: Order {} already in state {}. Skipping.", orderId, order.status());
-      return;
-  }
-  ```
-- **Trigger**: Activated when:
-  - The `orderId` already exists in `processedOrderStore`
-  - **AND** all Order fields are identical (same status, items, amount, date, etc.)
-- **Action**: The message is skipped without any state update.
-- **Rationale**: "At-Least-Once" delivery semantics from Kafka mean the same message can be delivered multiple times (e.g., after consumer restart). This check ensures idempotent processing—duplicate events are harmless.
-- **Example Scenario**:
-  - Message arrives: `Order(id=ORD-001, status=CREATED, items=[...], totalAmount=100.00)`
-  - Message arrives again (duplicate): Same exact order
-  - **Result**: Second message is silently skipped; state unchanged.
+### Idempotency Implementation: Offset-Based Duplicate Detection
 
-### Level 2: State Machine Validation (Sequencing Check)
-- **Mechanism**: `OrderService.isValidTransition()` enforces a strict **state machine** for order status.
-- **Valid State Transitions**:
-  ```
-  CREATED -> CONFIRMED -> DISPATCHED -> DELIVERED
-  ```
-- **Rules**:
-  - From `CREATED`: Can transition to `CONFIRMED`, `DISPATCHED`, or `DELIVERED`.
-  - From `CONFIRMED`: Can transition to `DISPATCHED` or `DELIVERED`.
-  - From `DISPATCHED`: Can only transition to `DELIVERED`.
-  - From `DELIVERED`: No transitions allowed (terminal state).
-  - Unknown statuses: Default-allow (defensive posture for future extensibility).
-- **Implementation**:
-  ```java
-  private boolean isValidTransition(String currentStatus, String newStatus) {
-      if (currentStatus.equals(newStatus)) {
-          return true; // Same status (duplicate or no-op)
-      }
-      return switch (currentStatus) {
-          case "CREATED" -> newStatus.equals("CONFIRMED") || newStatus.equals("DISPATCHED") || newStatus.equals("DELIVERED");
-          case "CONFIRMED" -> newStatus.equals("DISPATCHED") || newStatus.equals("DELIVERED");
-          case "DISPATCHED" -> newStatus.equals("DELIVERED");
-          case "DELIVERED" -> false;
-          default -> true;
-      };
-  }
-  ```
-- **Action on Invalid Transition**:
-  - The incoming message is **rejected** without updating state.
-  - A warning is logged with the attempted transition details.
-- **Rationale**: Prevents "older" events (due to Kafka reordering or out-of-order delivery) from corrupting the state. For example:
-  - Current state: `Order(status=DISPATCHED)`
-  - Incoming event: `Order(status=CREATED)` (out of order)
-  - **Result**: The event is rejected; order remains `DISPATCHED`.
-- **Log Example**:
-  ```
-  WARN: Invalid transition: Order ORD-001 cannot move from DISPATCHED to CREATED. Rejecting update.
-  ```
-- **API Impact**: The rejected order state is preserved; queries return the last valid state.
+**Challenge**: Kafka's At-Least-Once delivery means the same message can be delivered multiple times (e.g., after consumer restart, network partition, rebalancing).
 
-### Level 3: Business Logic Processing (Shipping Cost Calculation)
+**Solution**: Track processed message offsets per orderId to detect and skip duplicates.
+
+#### Implementation Details
+
+```java
+// In KafkaConsumerService
+private final ConcurrentMap<String, ProcessedMessageInfo> idempotencyMap = new ConcurrentHashMap<>();
+
+private boolean isMessageAlreadyProcessed(String orderId, long offset) {
+    ProcessedMessageInfo existing = idempotencyMap.get(orderId);
+    if (existing == null) {
+        return false;  // First time seeing this orderId
+    }
+    // Compare offsets: if new offset <= last processed offset, it's a retry
+    return offset <= existing.offset;
+}
+
+private void recordProcessedMessage(String orderId, long offset) {
+    idempotencyMap.put(orderId, new ProcessedMessageInfo(offset, System.currentTimeMillis()));
+}
+
+private record ProcessedMessageInfo(long offset, long processedAt) {}
+```
+
+#### Idempotency Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant Kafka as Kafka Broker
+    participant Consumer as KafkaConsumerService
+    participant Map as idempotencyMap
+    participant Order as OrderService
+
+    Note over Kafka: Message: offset 42, orderId=ORD-001
+
+    rect rgb(230, 255, 230)
+        Note right of Consumer: First Delivery (Normal)
+        Kafka->>+Consumer: Deliver message (offset 42)
+        Consumer->>+Map: Check: ORD-001 processed?
+        Map-->>-Consumer: No entry found → New message
+        
+        Consumer->>+Order: processOrder(order)
+        Order-->>-Consumer: Success
+        
+        Consumer->>Map: Record: ORD-001 → offset 42
+        Consumer->>Kafka: Acknowledge & commit offset 42
+        Consumer-->>-Kafka: Processing complete
+    end
+
+    Note over Consumer: Consumer crashes before offset committed
+
+    rect rgb(255, 240, 230)
+        Note right of Consumer: Redelivery (After Restart)
+        Kafka->>+Consumer: Redeliver message (offset 42)
+        Consumer->>+Map: Check: ORD-001 processed?
+        Map-->>-Consumer: Found: last offset = 42
+        Note over Consumer: offset 42 <= 42 → Duplicate!
+        
+        Consumer->>Consumer: Skip processing (idempotent)
+        Consumer->>Kafka: Acknowledge & commit offset 42
+        Consumer-->>-Kafka: Duplicate skipped
+        Note over Consumer: ✓ No duplicate state update
+    end
+
+    rect rgb(230, 240, 255)
+        Note right of Consumer: Next Event (New Message)
+        Kafka->>+Consumer: Deliver message (offset 43)
+        Consumer->>+Map: Check: ORD-001 processed?
+        Map-->>-Consumer: Found: last offset = 42
+        Note over Consumer: offset 43 > 42 → New message!
+        
+        Consumer->>+Order: processOrder(order)
+        Order-->>-Consumer: Success
+        
+        Consumer->>Map: Update: ORD-001 → offset 43
+        Consumer->>Kafka: Acknowledge & commit offset 43
+        Consumer-->>-Kafka: Processing complete
+    end
+```
+
+**Key Benefits:**
+- ✅ **Prevents duplicate state updates** when Kafka redelivers messages
+- ✅ **Lightweight**: In-memory map (O(1) lookup)
+- ✅ **Per-orderId tracking**: Different orders processed independently
+- ✅ **Offset-based**: Works even if message payload is identical (same Order object)
+
+**Why Offset-Based Detection?**
+- Kafka guarantees: Same partition + same offset = same message
+- Messages with same orderId always go to same partition (via message key)
+- Therefore: orderId + offset uniquely identifies a message
+- If offset <= last processed offset → it's a redelivery (duplicate)
+
+---
+### State Machine Validation (Sequencing Check)
+
+**Challenge**: Out-of-order message delivery (though rare due to partition ordering) or late-arriving events could corrupt order state.
+
+**Solution**: Enforce a strict state machine for order status transitions.
+
+#### State Machine Diagram
+
+```mermaid
+stateDiagram-v2
+    [*] --> CREATED: New order
+    CREATED --> CONFIRMED: Payment processed
+    CREATED --> DISPATCHED: Fast-track shipping
+    CREATED --> DELIVERED: Same-day delivery
+    
+    CONFIRMED --> DISPATCHED: Warehouse ships
+    CONFIRMED --> DELIVERED: Pick-up delivery
+    
+    DISPATCHED --> DELIVERED: Delivery complete
+    
+    DELIVERED --> [*]: Final state
+    
+    note right of CREATED
+        Entry point
+        All statuses can reach here
+    end note
+    
+    note right of DELIVERED
+        Terminal state
+        No transitions allowed
+    end note
+```
+
+#### Valid Transitions Table
+
+| Current Status | Allowed Next Statuses | Rejected Transitions |
+|----------------|----------------------|---------------------|
+| `null` (new)   | CREATED, CONFIRMED, DISPATCHED, DELIVERED | None (all allowed) |
+| **CREATED**    | CONFIRMED, DISPATCHED, DELIVERED | None |
+| **CONFIRMED**  | DISPATCHED, DELIVERED | CREATED (backward) |
+| **DISPATCHED** | DELIVERED | CREATED, CONFIRMED (backward) |
+| **DELIVERED**  | None (terminal) | All (order complete) |
+
+#### Implementation
+
+```java
+private boolean isValidTransition(String currentStatus, String newStatus) {
+    if (currentStatus.equals(newStatus)) {
+        return true;  // Same status (duplicate or no-op)
+    }
+    return switch (currentStatus) {
+        case "CREATED" -> newStatus.equals("CONFIRMED") || 
+                          newStatus.equals("DISPATCHED") || 
+                          newStatus.equals("DELIVERED");
+        case "CONFIRMED" -> newStatus.equals("DISPATCHED") || 
+                            newStatus.equals("DELIVERED");
+        case "DISPATCHED" -> newStatus.equals("DELIVERED");
+        case "DELIVERED" -> false;  // Terminal state
+        default -> true;  // Unknown statuses: allow (defensive posture)
+    };
+}
+```
+
+#### Sequencing Validation Flow
+
+```mermaid
+sequenceDiagram
+    participant Kafka as Kafka Broker
+    participant Consumer as KafkaConsumerService
+    participant Order as OrderService
+    participant State as processedOrderStore
+
+    Note over State: Current: ORD-001 status=DISPATCHED
+
+    rect rgb(255, 230, 230)
+        Note right of Kafka: Out-of-Order Event (Late Arrival)
+        Kafka->>+Consumer: Deliver: ORD-001 status=CREATED (old event)
+        Consumer->>+Order: processOrder(order with CREATED)
+        
+        Order->>State: Get current order
+        State-->>Order: ProcessedOrder(status=DISPATCHED)
+        
+        Order->>Order: isValidTransition("DISPATCHED", "CREATED")?
+        Note over Order: DISPATCHED → CREATED = INVALID!
+        
+        Order->>Order: Log warning: Invalid transition
+        Note over Order: Order state preserved at DISPATCHED
+        
+        Order-->>-Consumer: Processing skipped (invalid transition)
+        Consumer->>Kafka: Acknowledge (skip bad event)
+        Consumer-->>-Kafka: Done
+        Note over State: ✓ State integrity maintained
+    end
+
+    rect rgb(230, 255, 230)
+        Note right of Kafka: Valid Next Event
+        Kafka->>+Consumer: Deliver: ORD-001 status=DELIVERED
+        Consumer->>+Order: processOrder(order with DELIVERED)
+        
+        Order->>State: Get current order
+        State-->>Order: ProcessedOrder(status=DISPATCHED)
+        
+        Order->>Order: isValidTransition("DISPATCHED", "DELIVERED")?
+        Note over Order: DISPATCHED → DELIVERED = VALID ✓
+        
+        Order->>Order: Calculate shipping cost
+        Order->>State: Update: ProcessedOrder(status=DELIVERED, ...)
+        State-->>Order: Updated
+        
+        Order-->>-Consumer: Success
+        Consumer->>Kafka: Acknowledge & commit
+        Consumer-->>-Kafka: Done
+        Note over State: ✓ Order progressed to DELIVERED
+    end
+```
+
+**Handling Invalid Transitions:**
+- **Action**: Log warning with current and attempted status
+- **State**: Preserved (not updated with invalid status)
+- **Acknowledgment**: Message is still acknowledged (prevents blocking)
+- **Rationale**: Late-arriving events shouldn't block processing; state machine prevents corruption
+
+**Example Log**:
+```
+WARN [OrderService]: Invalid transition: Order ORD-001 cannot move from DISPATCHED to CREATED. Rejecting update.
+  Current State: ProcessedOrder(Order(orderId=ORD-001, status=DISPATCHED, ...), shippingCost=15.50)
+  Incoming Event: Order(orderId=ORD-001, status=CREATED, ...)
+```
+
+---
+---
+
+## 3. Retry and Dead Letter Topic (DLT) Pattern
+
+**Challenge**: Transient failures (network glitches, temporary DB unavailability) and permanent failures (corrupt data, unrecoverable errors) need different handling strategies.
+
+**Solution**: Implement retry with exponential backoff for transient failures, and route unrecoverable messages to a Dead Letter Topic.
+
+### Retry Strategy with CommonErrorHandler
+
+The Consumer uses Spring Kafka's `CommonErrorHandler` with exponential backoff:
+
+```java
+@Bean
+public CommonErrorHandler errorHandler() {
+    DefaultErrorHandler errorHandler = new DefaultErrorHandler(
+        new FixedBackOff(1000L, 3L)  // 1 second interval, 3 retries
+    );
+    
+    errorHandler.addNotRetryableExceptions(  // Immediately send to DLT
+        JsonProcessingException.class,        // Malformed JSON
+        DeserializationException.class        // Deserialization error
+    );
+    
+    return errorHandler;
+}
+```
+
+**Retry Configuration:**
+- **Initial Delay**: 1 second
+- **Max Attempts**: 3 retries (4 total attempts including original)
+- **Backoff**: Fixed (can be changed to exponential)
+- **Non-Retryable Exceptions**: Deserialization errors (poison pills)
+
+### Retry and DLT Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant Kafka as Kafka Broker
+    participant Consumer as KafkaConsumerService
+    participant ErrorHandler as CommonErrorHandler
+    participant DLT as Dead Letter Topic
+
+    Note over Kafka: Message: offset 42
+
+    rect rgb(255, 240, 230)
+        Note right of Consumer: Attempt 1 (Transient Failure)
+        Kafka->>+Consumer: Deliver message (offset 42)
+        Consumer->>Consumer: Process order
+        Consumer-->>Consumer: RuntimeException (DB timeout)
+        Consumer->>-ErrorHandler: Exception thrown
+        
+        ErrorHandler->>ErrorHandler: Catch exception
+        Note over ErrorHandler: Retry 1/3<br/>Wait 1 second
+        
+        ErrorHandler->>+Consumer: Retry delivery
+        Consumer->>Consumer: Process order
+        Consumer-->>Consumer: RuntimeException (DB still down)
+        Consumer->>-ErrorHandler: Exception thrown
+        
+        Note over ErrorHandler: Retry 2/3<br/>Wait 1 second
+        
+        ErrorHandler->>+Consumer: Retry delivery
+        Consumer->>Consumer: Process order
+        Consumer-->>Consumer: RuntimeException (DB still down)
+        Consumer->>-ErrorHandler: Exception thrown
+        
+        Note over ErrorHandler: Retry 3/3<br/>Wait 1 second
+        
+        ErrorHandler->>+Consumer: Final retry
+        Consumer->>Consumer: Process order
+        Consumer-->>Consumer: RuntimeException (DB still down)
+        Consumer->>-ErrorHandler: Exception thrown
+        
+        Note over ErrorHandler: Max retries exceeded<br/>Send to DLT
+        
+        ErrorHandler->>DLT: Publish failed message + exception info
+        ErrorHandler->>Kafka: Acknowledge offset 42 (skip message)
+        Note over Kafka: Consumer moves to offset 43
+    end
+
+    Note over DLT: Message stored for<br/>manual investigation
+
+    rect rgb(230, 255, 230)
+        Note right of Consumer: Successful Processing
+        Kafka->>+Consumer: Deliver message (offset 43)
+        Consumer->>Consumer: Process order
+        Consumer-->>Consumer: Success
+        Consumer->>Kafka: Acknowledge offset 43
+        Consumer-->>-Kafka: Done
+        Note over Consumer: ✓ Normal flow resumed
+    end
+```
+
+### Dead Letter Topic (DLT) Details
+
+**Purpose**: Store messages that fail processing after all retry attempts.
+
+**DLT Configuration:**
+```properties
+# Automatically created by Spring Kafka
+# Pattern: {original-topic}.DLT
+# Example: order-events.DLT
+```
+
+**DLT Message Headers:**
+```json
+{
+  "kafka_dlt-original-topic": "order-events",
+  "kafka_dlt-original-partition": "0",
+  "kafka_dlt-original-offset": "42",
+  "kafka_dlt-exception-message": "Failed to process order: DB connection timeout",
+  "kafka_dlt-exception-stacktrace": "...",
+  "kafka_dlt-original-timestamp": "2026-01-03T10:30:00.000Z"
+}
+```
+
+**DLT Processing Options:**
+
+1. **Manual Investigation**:
+   - DevOps team monitors DLT
+   - Analyze failed messages
+   - Fix root cause (e.g., restore DB)
+   - Manually replay messages
+
+2. **Automated Replay**:
+   - Separate consumer reads from DLT
+   - Applies fix/transformation
+   - Republishes to original topic
+
+3. **Alerting**:
+   - Monitor DLT message count
+   - Alert if count exceeds threshold
+   - Indicates systemic issue
+
+**When Messages Go to DLT:**
+- ✅ **After 3 failed retries** (transient errors)
+- ✅ **Immediately** for non-retryable exceptions (poison pills)
+- ✅ **Processing exceptions** (business logic errors)
+- ❌ **NOT** for valid messages that are rejected by sequencing validation
+
+### Kafka Connectivity Monitoring
+
+The Consumer implements `KafkaConnectivityService` for broker monitoring:
+
+#### Connectivity Monitoring Flow
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disconnected: Service starts
+    
+    Disconnected --> Connecting: Start monitoring
+    Connecting --> Connected: Broker reachable
+    Connecting --> Disconnected: Connection failed<br/>(retry after backoff)
+    
+    Connected --> Monitoring: Periodic health check
+    Monitoring --> Connected: Broker still UP
+    Monitoring --> Disconnected: Broker DOWN<br/>(network issue)
+    
+    Disconnected --> Connecting: Retry with<br/>exponential backoff
+    
+    note right of Connecting
+        Test Connection:
+        - AdminClient.listTopics()
+        - 3-second timeout
+    end note
+    
+    note right of Connected
+        Listeners Active:
+        - Kafka consumer polling
+        - Processing messages
+    end note
+    
+    note right of Disconnected
+        Listeners Stopped:
+        - No message consumption
+        - Health endpoint: DOWN
+    end note
+```
+
+**Implementation Features:**
+- **Async Monitoring**: Non-blocking background thread
+- **Exponential Backoff**: 2s → 4s → 8s → 16s → 32s → 60s max
+- **Infinite Retries**: Never gives up connecting
+- **Listener Management**: Auto-start/stop based on connectivity
+- **Health Reporting**: Exposes Kafka status via `/health/ready` endpoint
+
+**Benefits:**
+- ✅ **Graceful Degradation**: Consumer continues running when Kafka is down
+- ✅ **Auto-Recovery**: Automatically reconnects when Kafka comes back up
+- ✅ **No Crash Loops**: Doesn't crash/restart container on Kafka unavailability
+- ✅ **Load Balancer Integration**: Health endpoint enables traffic routing
+
+---
 - **Mechanism**: `OrderUtils.calculateShippingCost()` computes the shipping cost based on order total.
 - **Formula**:
   ```
