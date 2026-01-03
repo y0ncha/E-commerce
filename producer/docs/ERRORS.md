@@ -307,6 +307,99 @@ resilience4j.circuitbreaker.instances.cartService.permittedNumberOfCallsInHalfOp
 
 ---
 
+### Topic Not Found Error (TOPIC_NOT_FOUND)
+
+**Scenario**: The configured Kafka topic does not exist and auto-topic creation is disabled.
+
+**Detection**:
+- The `KafkaConnectivityService` checks the exception chain for `UnknownTopicOrPartitionException`
+- Also checks error messages containing "not present in metadata", "UnknownTopicOrPartition", or "unknown topic"
+- This detection happens in two places:
+  1. **Health Check**: Background monitoring continuously checks topic existence
+  2. **Producer Send**: When sending a message fails due to missing topic
+
+**Implementation**:
+```java
+// KafkaConnectivityService.java
+public boolean isTopicNotFoundException(Throwable e) {
+    Throwable cause = e;
+    while (cause != null) {
+        if (cause instanceof UnknownTopicOrPartitionException) {
+            return true;
+        }
+        String message = cause.getMessage();
+        if (message != null && (message.contains("not present in metadata") || 
+                               message.contains("UnknownTopicOrPartition") ||
+                               message.contains("unknown topic"))) {
+            return true;
+        }
+        cause = cause.getCause();
+    }
+    return false;
+}
+```
+
+**Health Check Integration**:
+The `/health/ready` endpoint will return:
+```json
+{
+  "name": "Producer (Cart Service)",
+  "type": "readiness",
+  "status": "DOWN",
+  "timestamp": "2026-01-03T12:34:56.789Z",
+  "checks": {
+    "service": {
+      "status": "UP",
+      "details": "Cart Service is running and responsive"
+    },
+    "kafka": {
+      "status": "DOWN",
+      "details": "DOWN - Topic 'orders' does not exist (TOPIC_NOT_FOUND)"
+    }
+  }
+}
+```
+HTTP Status: **503 Service Unavailable**
+
+**API Response (during order creation/update)**:
+- **Status**: `500 Internal Server Error`
+- **Error Type**: `TOPIC_NOT_FOUND`
+- **Response Body**:
+```json
+{
+  "timestamp": "2026-01-03T12:34:56.789Z",
+  "error": "Internal Server Error",
+  "message": "The configured Kafka topic does not exist and auto-creation is disabled.",
+  "path": "/cart-service/create-order",
+  "details": {
+    "type": "TOPIC_NOT_FOUND",
+    "orderId": "ORD-ABC123",
+    "topicName": "orders"
+  }
+}
+```
+
+**Architectural Reasoning**:
+- This is a **configuration error** that prevents message delivery
+- Returns 500 because it's a server-side misconfiguration, not a temporary outage
+- Different from `KAFKA_DOWN` (broker unreachable) or `CIRCUIT_BREAKER_OPEN` (temporary protection)
+
+**Resolution**:
+1. Create the missing topic manually:
+   ```bash
+   docker exec kafka kafka-topics --bootstrap-server localhost:9092 \
+     --create --topic orders --partitions 3 --replication-factor 1
+   ```
+2. OR enable auto-topic creation in Kafka broker config (not recommended for production):
+   ```properties
+   auto.create.topics.enable=true
+   ```
+
+**Testing**:
+Use the provided test script: `./scripts/test-missing-topic.sh`
+
+---
+
 ## 2. Resiliency & Consistency Patterns
 
 To ensure the Producer remains a "source of truth," we implement advanced patterns in the `OrderService`.
@@ -383,6 +476,21 @@ The system includes proactive monitoring to prevent failures before they occur.
   "details": {
     "type": "KAFKA_DOWN",
     "orderId": "ORD-000A"
+  }
+}
+```
+
+### 500 Internal Server Error (Topic Not Found)
+```json
+{
+  "timestamp": "2026-01-01T12:00:00.000Z",
+  "error": "Internal Server Error",
+  "message": "The configured Kafka topic does not exist and auto-creation is disabled.",
+  "path": "/cart-service/create-order",
+  "details": {
+    "type": "TOPIC_NOT_FOUND",
+    "orderId": "ORD-000A",
+    "topicName": "orders"
   }
 }
 ```

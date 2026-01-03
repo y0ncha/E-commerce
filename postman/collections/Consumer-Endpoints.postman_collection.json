@@ -223,7 +223,7 @@
                   "// Test: Shipping cost is numeric and non-negative",
                   "pm.test(\"Shipping cost is numeric and non-negative\", () => {",
                   "    const jsonData = pm.response.json();",
-                  "    const shippingCost = parseFloat(jsonData.shippingCost);",
+                  "    const shippingCost = jsonData.shippingCost;",
                   "    pm.expect(shippingCost).to.be.a('number');",
                   "    pm.expect(shippingCost).to.be.at.least(0);",
                   "});",

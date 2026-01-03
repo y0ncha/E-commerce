@@ -1,4 +1,4 @@
-package mta.eda.consumer.service.kafka;
+package mta.eda.producer.service.kafka;
 
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
@@ -13,13 +13,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -31,9 +29,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * Features:
  * - Asynchronous background monitoring (non-blocking)
  * - Exponential backoff retry with Resilience4j
- * - Automatic Kafka listener restart when connection established
+ * - Pre-cached status for fast HTTP health endpoints
  * - Persistent retry mechanism (never gives up)
- * - Interrupt-safe listener management
  */
 @Service
 public class KafkaConnectivityService {
@@ -48,7 +45,6 @@ public class KafkaConnectivityService {
     private final String bootstrapServers;
     @Getter
     private final String topicName;
-    private final Optional<KafkaListenerEndpointRegistry> kafkaListenerEndpointRegistry;
     private final Retry kafkaRetry;
     private final ScheduledExecutorService scheduler;
 
@@ -61,12 +57,10 @@ public class KafkaConnectivityService {
 
     public KafkaConnectivityService(
             @Value("${spring.kafka.bootstrap-servers:localhost:9092}") String bootstrapServers,
-            @Value("${kafka.consumer.topic:orders}") String topicName,
-            Optional<KafkaListenerEndpointRegistry> kafkaListenerEndpointRegistry,
+            @Value("${kafka.topic.name:orders}") String topicName,
             @Autowired(required = false) RetryRegistry retryRegistry) {
         this.bootstrapServers = bootstrapServers;
         this.topicName = topicName;
-        this.kafkaListenerEndpointRegistry = kafkaListenerEndpointRegistry;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "kafka-connectivity-monitor");
             t.setDaemon(true);
@@ -146,27 +140,24 @@ public class KafkaConnectivityService {
      */
     private void checkKafkaConnectivity() {
         try {
-            logger.debug("Attempting Kafka connection...");
+            logger.debug("Attempting Kafka connection check...");
 
             // Execute with Resilience4j retry pattern
             try {
-                kafkaRetry.executeRunnable(this::connectAndManageListeners);
+                kafkaRetry.executeRunnable(this::connectAndCheckTopic);
             } catch (Exception e) {
                 logger.debug("Kafka retry cycle completed");
             }
 
-            // Adaptive scheduling: probe faster until listeners are running
+            // Adaptive scheduling: probe faster until ready
             boolean connected = kafkaConnected.get();
             boolean ready = topicReady.get();
-            boolean listenersRunning = areListenersRunning();
 
             long nextCheckDelay;
             if (!connected) {
                 nextCheckDelay = 1000;       // disconnected: retry quickly
             } else if (!ready) {
                 nextCheckDelay = 1000;       // connected but topic not ready: restart ASAP
-            } else if (!listenersRunning) {
-                nextCheckDelay = 1000;       // connected and topic ready but listeners down: restart ASAP
             } else {
                 nextCheckDelay = 30000;      // healthy: back off
             }
@@ -175,40 +166,36 @@ public class KafkaConnectivityService {
 
         } catch (Exception e) {
             logger.error("Unexpected error in connectivity check: {}", e.getMessage());
-            // Continue monitoring with faster retry if not ready or listeners down
+            // Continue monitoring with faster retry if not ready
             boolean connected = kafkaConnected.get();
             boolean ready = topicReady.get();
-            boolean listenersRunning = areListenersRunning();
-            long nextCheckDelay = (!connected || !ready || !listenersRunning) ? 1000 : 30000;
+            long nextCheckDelay = (!connected || !ready) ? 1000 : 30000;
             scheduleNextCheck(nextCheckDelay);
         }
     }
 
     /**
-     * Test Kafka connection and manage listener state
+     * Test Kafka connection and verify topic exists
      * This gets called by Resilience4j with exponential backoff
      */
-    private void connectAndManageListeners() {
+    private void connectAndCheckTopic() {
         boolean isConnected = testKafkaConnection();
         boolean wasConnected = kafkaConnected.get();
         boolean topicExists = isConnected && verifyTopicExists();
         boolean wasReady = topicReady.get();
 
         if (isConnected && !wasConnected) {
-            // Kafka just became available (transition from down to up)
+            // Kafka just became available
             logger.info("✓ Kafka broker connected at {}!", bootstrapServers);
             kafkaConnected.set(true);
-
         } else if (!isConnected && wasConnected) {
-            // Kafka just became unavailable (transition from up to down)
+            // Kafka just became unavailable
             logger.warn("✗ Kafka broker disconnected from {}! Will retry...", bootstrapServers);
             kafkaConnected.set(false);
             topicReady.set(false);
-            stopKafkaListeners();
-            throw new RuntimeException("Kafka broker unavailable at " + bootstrapServers);
-
+            return;
         } else if (!isConnected) {
-            // Still disconnected - Resilience4j will retry with exponential backoff
+            // Still disconnected - Resilience4j will retry
             throw new RuntimeException("Kafka broker unavailable at " + bootstrapServers);
         }
 
@@ -216,28 +203,16 @@ public class KafkaConnectivityService {
         if (topicExists && !wasReady) {
             logger.info("✓ Kafka topic '{}' ready for use!", topicName);
             topicReady.set(true);
-            startKafkaListeners();
-
         } else if (!topicExists && wasReady) {
             logger.warn("✗ Kafka topic '{}' became unavailable! Will retry...", topicName);
             topicReady.set(false);
-            stopKafkaListeners();
-
         } else if (!topicExists) {
-            // Topic still not available
             throw new RuntimeException("Kafka topic '" + topicName + "' not available");
-        }
-
-        // If connected and topic ready, check if listeners are running
-        if (isConnected && topicExists && !areListenersRunning()) {
-            // Kafka is connected and topic ready but listeners aren't running - try to start them
-            logger.warn("⚠ Kafka connected and topic ready but listeners not running. Attempting to start...");
-            startKafkaListeners();
         }
     }
 
     /**
-     * Test Kafka connection (3-second timeout)
+     * Test Kafka broker connection (3-second timeout)
      */
     private boolean testKafkaConnection() {
         AdminClient admin = null;
@@ -249,11 +224,13 @@ public class KafkaConnectivityService {
             adminProps.put(AdminClientConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG, 1000);
 
             admin = AdminClient.create(adminProps);
-            admin.describeCluster().nodes().get(3, java.util.concurrent.TimeUnit.SECONDS);
-            return true;
+            var brokers = admin.describeCluster()
+                    .nodes()
+                    .get(3, TimeUnit.SECONDS);
+            return !brokers.isEmpty();
 
         } catch (Exception e) {
-            logger.warn("Kafka connectivity test failed for {}: {}", bootstrapServers, e.getMessage());
+            logger.debug("Kafka connectivity test failed for {}: {}", bootstrapServers, e.getMessage());
             return false;
 
         } finally {
@@ -341,107 +318,17 @@ public class KafkaConnectivityService {
     }
 
     /**
-     * Start Kafka listeners (interrupt-safe)
+     * Get the current Kafka connection state (instant response - no blocking)
      */
-    private void startKafkaListeners() {
-        if (kafkaListenerEndpointRegistry.isEmpty()) {
-            logger.warn("⚠ KafkaListenerEndpointRegistry is not available - cannot start listeners");
-            return;
-        }
-
-        kafkaListenerEndpointRegistry.ifPresent(registry -> {
-            try {
-                Thread listenerThread = Thread.currentThread();
-                logger.info("Starting Kafka listeners (thread: {})", listenerThread.getName());
-
-                // Check current state before starting
-                boolean wasRunning = registry.isRunning();
-                logger.debug("Registry running state before start: {}", wasRunning);
-                logger.debug("Number of listener containers: {}", registry.getListenerContainers().size());
-
-                registry.start();
-
-                // Verify listeners actually started
-                boolean nowRunning = registry.isRunning();
-                long runningContainers = registry.getListenerContainers().stream()
-                        .filter(org.springframework.kafka.listener.MessageListenerContainer::isRunning)
-                        .count();
-
-                logger.info("✓ Kafka listeners started successfully. Registry running: {}, Active containers: {}/{}",
-                        nowRunning, runningContainers, registry.getListenerContainers().size());
-
-            } catch (Exception e) {
-                logger.error("✗ Failed to start Kafka listeners: {}", e.getMessage(), e);
-                kafkaConnected.set(false);
-            }
-        });
-    }
-
-    /**
-     * Stop Kafka listeners (interrupt-safe)
-     */
-    private void stopKafkaListeners() {
-        kafkaListenerEndpointRegistry.ifPresent(registry -> {
-            try {
-                logger.info("Stopping Kafka listeners...");
-                registry.stop();
-                logger.info("✓ Kafka listeners stopped");
-
-            } catch (Exception e) {
-                logger.error("✗ Failed to stop Kafka listeners: {}", e.getMessage());
-            }
-        });
-    }
-
-    /**
-     * Get the current Kafka connection state
-     * Used by HealthService for health checks (instant response)
-     */
+    @SuppressWarnings("unused")
     public boolean isKafkaConnected() {
         return kafkaConnected.get();
     }
 
     /**
-     * Check if Kafka listeners are actually running and consuming.
-     * More accurate than just connection status.
-     */
-    public boolean areListenersRunning() {
-        return kafkaListenerEndpointRegistry
-                .map(registry -> registry.isRunning() && registry.getListenerContainers().stream()
-                        .anyMatch(org.springframework.kafka.listener.MessageListenerContainer::isRunning))
-                .orElse(false);
-    }
-
-    /**
-     * Get detailed status for health checks
-     */
-    public String getDetailedStatus() {
-        boolean connected = kafkaConnected.get();
-        boolean ready = topicReady.get();
-        boolean listenersRunning = areListenersRunning();
-
-        if (!connected) {
-            return "DOWN - Cannot connect to Kafka broker at " + bootstrapServers;
-        }
-
-        if (topicNotFound.get()) {
-            return "DOWN - Topic '" + topicName + "' does not exist (TOPIC_NOT_FOUND)";
-        }
-
-        if (!ready) {
-            return "DEGRADED - Connected to broker but topic '" + topicName + "' not ready";
-        }
-
-        if (!listenersRunning) {
-            return "DEGRADED - Connected to broker but listeners not running";
-        }
-
-        return "UP - Connected and consuming from topics";
-    }
-
-    /**
      * Check if Kafka topic is ready (instant response - no blocking)
      */
+    @SuppressWarnings("unused")
     public boolean isTopicReady() {
         return topicReady.get();
     }
@@ -449,15 +336,42 @@ public class KafkaConnectivityService {
     /**
      * Check if topic was not found (instant response - no blocking)
      */
+    @SuppressWarnings("unused")
     public boolean isTopicNotFound() {
         return topicNotFound.get();
     }
 
     /**
+     * Get detailed status for health checks (instant response - no blocking)
+     */
+    @SuppressWarnings("unused")
+    public boolean isHealthy() {
+        return kafkaConnected.get() && topicReady.get() && !topicNotFound.get();
+    }
+
+    /**
+     * Get the last error reason (instant response - no blocking)
+     */
+    @SuppressWarnings("unused")
+    public String getDetailedStatus() {
+        if (!kafkaConnected.get()) {
+            return "DOWN - Cannot connect to Kafka broker at " + bootstrapServers;
+        }
+        if (topicNotFound.get()) {
+            return "DOWN - Topic '" + topicName + "' does not exist (TOPIC_NOT_FOUND)";
+        }
+        if (!topicReady.get()) {
+            return "DEGRADED - Connected to broker but topic '" + topicName + "' not ready";
+        }
+        return "UP - Kafka broker and topic '" + topicName + "' ready";
+    }
+
+    /**
      * Get the last error message
      */
+    @SuppressWarnings("unused")
     public String getLastError() {
         return lastError.get();
     }
-
 }
+

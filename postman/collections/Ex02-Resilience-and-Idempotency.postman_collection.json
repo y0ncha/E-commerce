@@ -157,7 +157,8 @@
 							"    pm.expect(jsonData.orderId).to.eql(pm.environment.get(\"test_order_id_idempotency\"));",
 							"    pm.expect(jsonData.status).to.eql(\"CREATED\");",
 							"    pm.expect(jsonData).to.have.property(\"shippingCost\");",
-							"    pm.expect(parseFloat(jsonData.shippingCost)).to.be.above(0);",
+							"    pm.expect(jsonData.shippingCost).to.be.a('number');",
+							"    pm.expect(jsonData.shippingCost).to.be.above(0);",
 							"});"
 						],
 						"type": "text/javascript"

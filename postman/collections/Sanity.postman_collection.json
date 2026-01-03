@@ -411,8 +411,8 @@
               "",
               "pm.test(\"Order details are correct when found\", () => {",
               "    const jsonData = pm.response.json();",
-              "    // shippingCost is a string formatted as \"%.2f\"",
-              "    pm.expect(parseFloat(jsonData.shippingCost)).to.be.above(0);",
+              "    pm.expect(jsonData.shippingCost).to.be.a('number');",
+              "    pm.expect(jsonData.shippingCost).to.be.above(0);",
               "    pm.expect(jsonData.status).eql('new');",
               "});"
             ],
@@ -725,7 +725,7 @@
               "    // Test: Shipping cost is numeric",
               "    pm.test(\"Shipping cost is numeric\", () => {",
               "        const jsonData = pm.response.json();",
-              "        const shippingCost = parseFloat(jsonData.shippingCost);",
+              "        const shippingCost = jsonData.shippingCost;",
               "        pm.expect(shippingCost).to.be.a('number');",
               "        pm.expect(shippingCost).to.be.at.least(0);",
               "    });",
@@ -794,7 +794,43 @@
       "response": []
     },
     {
-      "name": "Debug",
+      "name": "Debug - All consumed orders by now",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "206638c5-931e-40d9-9126-28b54373ea02",
+            "exec": [
+              "const response = pm.response.json();",
+              "const orderIds = response.orderIds; // Assuming the orderIds are returned in the response body",
+              "const orderId = pm.environment.get(\"order_id\");",
+              "",
+              "pm.test(\"Check if the response status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"Check if the response body contains the order_id\", function () {",
+              "    pm.expect(orderIds).to.include(orderId);",
+              "});",
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "35965685-6a87-4ef7-ba5f-62ffe968a909",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
       "id": "596032c2-aa36-4f05-afeb-2e92d52f2164",
       "request": {
         "method": "GET",

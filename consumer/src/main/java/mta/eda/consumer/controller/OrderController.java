@@ -200,7 +200,7 @@ public class OrderController {
             response.put("orderDate", order.order().orderDate());
             response.put("items", order.order().items());
             response.put("totalAmount", order.order().totalAmount());
-            response.put("shippingCost", String.format("%.2f", order.shippingCost()));
+            response.put("shippingCost", order.shippingCost());
             response.put("currency", order.order().currency());
             response.put("status", order.order().status());
 

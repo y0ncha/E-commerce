@@ -20,6 +20,16 @@ import java.util.Map;
  * GlobalExceptionHandler
  * Handles API errors for all controllers using a consistent envelope.
  * Aligned with MTA EDA Exercise 2 requirements.
+ *
+ * Error Types:
+ * - VALIDATION_ERROR: Request validation failed
+ * - MALFORMED_JSON: Invalid JSON in request body
+ * - INVALID_ORDER_ID: Invalid order ID format
+ * - ORDER_NOT_FOUND: Order not found in state store
+ * - DUPLICATE_ORDER: Attempted to create a duplicate order
+ * - KAFKA_SEND_FAILURE: Failed to send message to Kafka after retries
+ * - TOPIC_NOT_FOUND: Required Kafka topic does not exist
+ * - CIRCUIT_BREAKER_OPEN: Circuit breaker is open due to high failure rates
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -40,9 +50,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidationExceptions(MethodArgumentNotValidException ex, HttpServletRequest request) {
+        logger.warn("Validation error: {}", ex.getMessage());
         Map<String, String> fieldErrors = new LinkedHashMap<>();
         ex.getBindingResult().getFieldErrors().forEach(err -> fieldErrors.put(err.getField(), err.getDefaultMessage()));
-        Map<String, Object> details = new HashMap<>();
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("type", "VALIDATION_ERROR");
         details.put("fieldErrors", fieldErrors);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(request, "Bad Request", "Validation error", details));
     }
@@ -50,13 +62,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleMalformedJson(HttpMessageNotReadableException ex, HttpServletRequest request) {
         logger.warn("Malformed JSON received: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(request, "Bad Request", "Invalid request body. Ensure JSON is properly formatted.", null));
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("type", "MALFORMED_JSON");
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(request, "Bad Request", "Invalid request body. Ensure JSON is properly formatted.", details));
     }
 
     @ExceptionHandler(InvalidOrderIdException.class)
     public ResponseEntity<Map<String, Object>> handleInvalidOrderId(InvalidOrderIdException ex, HttpServletRequest request) {
         logger.warn("Invalid orderId format: {}", ex.getOrderId());
-        Map<String, Object> details = new HashMap<>();
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("type", "INVALID_ORDER_ID");
         details.put("orderId", ex.getOrderId());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(request, "Bad Request", ex.getMessage(), details));
     }
@@ -64,7 +79,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(OrderNotFoundException.class)
     public ResponseEntity<Map<String, Object>> handleOrderNotFound(OrderNotFoundException ex, HttpServletRequest request) {
         logger.info("Order not found: {}", ex.getOrderId());
-        Map<String, Object> details = new HashMap<>();
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("type", "ORDER_NOT_FOUND");
         details.put("orderId", ex.getOrderId());
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorBody(request, "Not Found", ex.getMessage(), details));
     }
@@ -72,7 +88,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DuplicateOrderException.class)
     public ResponseEntity<Map<String, Object>> handleDuplicateOrder(DuplicateOrderException ex, HttpServletRequest request) {
         logger.warn("Duplicate order attempt: {}", ex.getOrderId());
-        Map<String, Object> details = new HashMap<>();
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("type", "DUPLICATE_ORDER");
         details.put("orderId", ex.getOrderId());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(errorBody(request, "Conflict", ex.getMessage(), details));
     }
@@ -93,6 +110,26 @@ public class GlobalExceptionHandler {
         Map<String, Object> body = errorBody(request, "Internal Server Error", 
                 "The server encountered an error while publishing the order event.", details);
         
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
+    }
+
+    /**
+     * Handle Topic Not Found (500 Internal Server Error).
+     * Triggered when attempting to produce to a non-existent Kafka topic.
+     * Architectural Reasoning: This is a configuration error that prevents message delivery.
+     */
+    @ExceptionHandler(TopicNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleTopicNotFound(TopicNotFoundException ex, HttpServletRequest request) {
+        logger.error("Topic not found for orderId={}: Topic '{}' does not exist", ex.getOrderId(), ex.getTopicName());
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("type", "TOPIC_NOT_FOUND");
+        details.put("orderId", ex.getOrderId());
+        details.put("topicName", ex.getTopicName());
+
+        Map<String, Object> body = errorBody(request, "Internal Server Error",
+                "The configured Kafka topic does not exist and auto-creation is disabled.", details);
+
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
 

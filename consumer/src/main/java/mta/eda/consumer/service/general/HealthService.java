@@ -50,12 +50,22 @@ public class HealthService {
     public HealthCheck getKafkaStatus() {
         String detailedStatus = kafkaConnectivityService.getDetailedStatus();
 
+        if (!kafkaConnectivityService.isKafkaConnected()) {
+            return new HealthCheck("DOWN", detailedStatus);
+        }
+
+        if (kafkaConnectivityService.isTopicNotFound()) {
+            return new HealthCheck("DOWN", detailedStatus);
+        }
+
+        if (!kafkaConnectivityService.isTopicReady()) {
+            return new HealthCheck("DEGRADED", detailedStatus);
+        }
+
         if (kafkaConnectivityService.isKafkaConnected() && kafkaConnectivityService.areListenersRunning()) {
             return new HealthCheck("UP", detailedStatus);
-        } else if (kafkaConnectivityService.isKafkaConnected()) {
-            return new HealthCheck("DEGRADED", detailedStatus);
         } else {
-            return new HealthCheck("DOWN", detailedStatus);
+            return new HealthCheck("DEGRADED", detailedStatus);
         }
     }
 
