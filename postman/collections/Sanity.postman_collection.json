@@ -482,7 +482,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"status\": \"DISPATCHED\"\n}"
+          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"status\": \"dispatched\"\n}"
         },
         "url": {
           "raw": "{{base_url_producer}}/update-order",
@@ -620,7 +620,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"status\": \"CREATED\"\n}"
+          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"status\": \"created\"\n}"
         },
         "url": {
           "raw": "{{base_url_producer}}/update-order",
@@ -821,6 +821,25 @@
           ]
         },
         "description": "Get order details by order ID (GET with query parameter)"
+      },
+      "response": []
+    },
+    {
+      "name": "Debug",
+      "id": "596032c2-aa36-4f05-afeb-2e92d52f2164",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url_consumer}}/debug/all-orders",
+          "host": [
+            "{{base_url_consumer}}"
+          ],
+          "path": [
+            "debug",
+            "all-orders"
+          ]
+        }
       },
       "response": []
     }

@@ -158,22 +158,30 @@ public class KafkaConnectivityService {
      */
     private void connectAndManageListeners() {
         boolean isConnected = testKafkaConnection();
+        boolean wasConnected = kafkaConnected.get();
 
-        if (isConnected && !kafkaConnected.getAndSet(true)) {
-            // Kafka just became available
+        if (isConnected && !wasConnected) {
+            // Kafka just became available (transition from down to up)
             logger.info("✓ Kafka broker connected at {}!", bootstrapServers);
+            kafkaConnected.set(true);
             startKafkaListeners();
 
-        } else if (!isConnected && kafkaConnected.getAndSet(false)) {
-            // Kafka just became unavailable
+        } else if (isConnected && !areListenersRunning()) {
+            // Kafka is connected but listeners aren't running - try to start them
+            logger.warn("⚠ Kafka connected but listeners not running. Attempting to start...");
+            startKafkaListeners();
+
+        } else if (!isConnected && wasConnected) {
+            // Kafka just became unavailable (transition from up to down)
             logger.warn("✗ Kafka broker disconnected from {}! Will retry...", bootstrapServers);
+            kafkaConnected.set(false);
             stopKafkaListeners();
 
         } else if (!isConnected) {
             // Still disconnected - Resilience4j will retry with exponential backoff
             throw new RuntimeException("Kafka broker unavailable at " + bootstrapServers);
         }
-        // If still connected, just continue
+        // If connected and listeners running, just continue
     }
 
     /**
@@ -193,6 +201,7 @@ public class KafkaConnectivityService {
             return true;
 
         } catch (Exception e) {
+            logger.warn("Kafka connectivity test failed for {}: {}", bootstrapServers, e.getMessage());
             return false;
 
         } finally {
@@ -208,13 +217,31 @@ public class KafkaConnectivityService {
      * Start Kafka listeners (interrupt-safe)
      */
     private void startKafkaListeners() {
+        if (kafkaListenerEndpointRegistry.isEmpty()) {
+            logger.warn("⚠ KafkaListenerEndpointRegistry is not available - cannot start listeners");
+            return;
+        }
+
         kafkaListenerEndpointRegistry.ifPresent(registry -> {
             try {
                 Thread listenerThread = Thread.currentThread();
                 logger.info("Starting Kafka listeners (thread: {})", listenerThread.getName());
 
+                // Check current state before starting
+                boolean wasRunning = registry.isRunning();
+                logger.debug("Registry running state before start: {}", wasRunning);
+                logger.debug("Number of listener containers: {}", registry.getListenerContainers().size());
+
                 registry.start();
-                logger.info("✓ Kafka listeners started successfully");
+
+                // Verify listeners actually started
+                boolean nowRunning = registry.isRunning();
+                long runningContainers = registry.getListenerContainers().stream()
+                        .filter(org.springframework.kafka.listener.MessageListenerContainer::isRunning)
+                        .count();
+
+                logger.info("✓ Kafka listeners started successfully. Registry running: {}, Active containers: {}/{}",
+                        nowRunning, runningContainers, registry.getListenerContainers().size());
 
             } catch (Exception e) {
                 logger.error("✗ Failed to start Kafka listeners: {}", e.getMessage(), e);
@@ -245,6 +272,35 @@ public class KafkaConnectivityService {
      */
     public boolean isKafkaConnected() {
         return kafkaConnected.get();
+    }
+
+    /**
+     * Check if Kafka listeners are actually running and consuming.
+     * More accurate than just connection status.
+     */
+    public boolean areListenersRunning() {
+        return kafkaListenerEndpointRegistry
+                .map(registry -> registry.isRunning() && registry.getListenerContainers().stream()
+                        .anyMatch(org.springframework.kafka.listener.MessageListenerContainer::isRunning))
+                .orElse(false);
+    }
+
+    /**
+     * Get detailed status for health checks
+     */
+    public String getDetailedStatus() {
+        boolean connected = kafkaConnected.get();
+        boolean listenersRunning = areListenersRunning();
+
+        if (!connected) {
+            return "DOWN - Cannot connect to Kafka broker at " + bootstrapServers;
+        }
+
+        if (!listenersRunning) {
+            return "DEGRADED - Connected to broker but listeners not running";
+        }
+
+        return "UP - Connected and consuming from topics";
     }
 
 }

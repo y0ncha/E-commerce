@@ -48,12 +48,14 @@ public class HealthService {
      * @return HealthCheck with Kafka broker status
      */
     public HealthCheck getKafkaStatus() {
-        boolean isConnected = kafkaConnectivityService.isKafkaConnected();
+        String detailedStatus = kafkaConnectivityService.getDetailedStatus();
 
-        if (isConnected) {
-            return new HealthCheck("UP", "Kafka broker is accessible at " + kafkaConnectivityService.getBootstrapServers());
+        if (kafkaConnectivityService.isKafkaConnected() && kafkaConnectivityService.areListenersRunning()) {
+            return new HealthCheck("UP", detailedStatus);
+        } else if (kafkaConnectivityService.isKafkaConnected()) {
+            return new HealthCheck("DEGRADED", detailedStatus);
         } else {
-            return new HealthCheck("DOWN", "Kafka broker unavailable at " + kafkaConnectivityService.getBootstrapServers() + " (retrying with exponential backoff)");
+            return new HealthCheck("DOWN", detailedStatus);
         }
     }
 

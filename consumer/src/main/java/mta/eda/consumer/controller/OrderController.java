@@ -10,6 +10,7 @@ import mta.eda.consumer.model.request.OrderDetailsRequest;
 import mta.eda.consumer.model.response.HealthCheck;
 import mta.eda.consumer.model.response.HealthResponse;
 import mta.eda.consumer.service.general.HealthService;
+import mta.eda.consumer.service.kafka.KafkaConnectivityService;
 import mta.eda.consumer.service.order.OrderService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,11 +40,14 @@ public class OrderController {
 
     private final OrderService orderService;
     private final HealthService healthService;
+    private final KafkaConnectivityService kafkaConnectivityService;
     private final Validator validator;
 
-    public OrderController(OrderService orderService, HealthService healthService, Validator validator) {
+    public OrderController(OrderService orderService, HealthService healthService,
+                          KafkaConnectivityService kafkaConnectivityService, Validator validator) {
         this.orderService = orderService;
         this.healthService = healthService;
+        this.kafkaConnectivityService = kafkaConnectivityService;
         this.validator = validator;
     }
 
@@ -190,15 +194,15 @@ public class OrderController {
             logger.info("Order found: orderId={}, status={}, shippingCost={}",
                     normalizedOrderId, order.order().status(), String.format("%.2f", order.shippingCost()));
 
-            Map<String, Object> response = new HashMap<>();
+            Map<String, Object> response = new LinkedHashMap<>();
             response.put("orderId", order.order().orderId());
             response.put("customerId", order.order().customerId());
             response.put("orderDate", order.order().orderDate());
-            response.put("status", order.order().status());
             response.put("items", order.order().items());
             response.put("totalAmount", order.order().totalAmount());
-            response.put("currency", order.order().currency());
             response.put("shippingCost", String.format("%.2f", order.shippingCost()));
+            response.put("currency", order.order().currency());
+            response.put("status", order.order().status());
 
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
@@ -280,5 +284,23 @@ public class OrderController {
 
         return ResponseEntity.ok(response);
     }
-}
 
+    /**
+     * Debug endpoint - Get Kafka connectivity status.
+     * Shows detailed info about Kafka connection and listener state.
+     * @return Detailed Kafka status
+     */
+    @GetMapping("/debug/kafka-status")
+    public ResponseEntity<Map<String, Object>> getKafkaStatus() {
+        logger.info("Debug: Fetching Kafka connectivity status");
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("connected", kafkaConnectivityService.isKafkaConnected());
+        response.put("listenersRunning", kafkaConnectivityService.areListenersRunning());
+        response.put("detailedStatus", kafkaConnectivityService.getDetailedStatus());
+        response.put("bootstrapServers", kafkaConnectivityService.getBootstrapServers());
+        response.put("timestamp", Instant.now().toString());
+
+        return ResponseEntity.ok(response);
+    }
+}
