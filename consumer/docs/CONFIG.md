@@ -2,6 +2,8 @@
 
 This document explains all configuration options available for the **Order Service (Consumer)** and the rationale behind each choice.
 
+**Course Context**: These configurations implement **Session 6 - Consumer Patterns** and **Session 7 - Offset Management** from the MTA Event-Driven Architecture course, focusing on manual offset commits and At-Least-Once delivery semantics.
+
 ---
 
 ## Overview
@@ -79,63 +81,53 @@ Configuration values follow the precedence: **Command-line → Environment Varia
   - Ensures no events are lost on first startup
   - Aligns with "At-Least-Once" delivery semantics
   - Safe default (can reprocess, not skip)
+  - **Course Requirement**: Guarantees all order events are eventually processed
 - **When to Change**:
   - Change to `latest` if you only want new messages (but will lose historical state)
   - Use `none` if you explicitly manage offsets externally
 
 #### `spring.kafka.consumer.enable-auto-commit=false`
 - **Purpose**: Automatic vs. manual offset commits
-- **Default**: `false` (MANDATORY)
+- **Default**: `false` (MANDATORY for this course)
 - **Why `false`**:
   - **Critical for At-Least-Once**: Manual control over when to commit
   - Consumer only commits offset AFTER state is successfully persisted
   - If consumer crashes before commit, message is redelivered on restart
   - Prevents losing events due to early commits
+  - **Course Requirement (Session 7)**: Demonstrates understanding of offset management
 - **Do NOT Change**: This is a course requirement for reliability
 
-#### `spring.kafka.consumer.max.poll.records=100`
-- **Purpose**: Number of messages fetched per poll
-- **Default**: `500` (we use Spring default if not specified)
-- **Use Case**: 
-  - Lower = more frequent commits (safer but slower)
-  - Higher = fewer commits (faster but more memory)
-- **Recommended for Consumer**: `100-500` (good balance)
-- **Override**: `SPRING_KAFKA_CONSUMER_MAX_POLL_RECORDS=200`
+**At-Least-Once Delivery Flow:**
 
-### Deserialization Configuration
+```mermaid
+sequenceDiagram
+    participant Kafka as Kafka Broker
+    participant Consumer as KafkaConsumerService
+    participant State as processedOrderStore
+    participant Commit as Offset Commit
 
-#### `spring.kafka.consumer.key-deserializer=org.apache.kafka.common.serialization.StringDeserializer`
-- **Purpose**: Deserialize message keys
-- **Default**: `StringDeserializer`
-- **Why**: Messages are keyed by `orderId` (String)
-- **Alternative**: Use `ByteArrayDeserializer` if keys are binary
+    Kafka->>Consumer: Deliver message (offset 42)
+    Consumer->>Consumer: Deserialize & validate
+    Consumer->>State: Update order state
+    
+    alt Success Path
+        State-->>Consumer: State updated successfully
+        Consumer->>Commit: acknowledge() → commit offset 42
+        Commit-->>Kafka: Offset 42 committed
+        Note over Kafka: Next poll starts from offset 43
+    else Failure Path (Crash before commit)
+        State-->>Consumer: State update failed / Crash
+        Note over Commit: Offset 42 NOT committed
+        Note over Kafka: Next poll starts from offset 42 (redelivery)
+        Note over Consumer: Consumer restarts
+        Kafka->>Consumer: Redeliver message (offset 42)
+        Note over Consumer: Idempotency check detects duplicate<br/>or reprocesses safely
+    end
+```
 
-#### `spring.kafka.consumer.value-deserializer=org.apache.kafka.common.serialization.StringDeserializer`
-- **Purpose**: Deserialize message values
-- **Default**: `StringDeserializer`
-- **Why**: Raw JSON strings from Kafka → Jackson `ObjectMapper` converts to `Order` record
-- **Note**: We handle JSON parsing in `KafkaConsumerService` with `ObjectMapper.readValue()`
-
----
-
-## Consumer-Specific Configuration
-
-### Topic Name (Configurable)
-
-#### `kafka.consumer.topic=${KAFKA_TOPIC:orders}`
-- **Purpose**: Which Kafka topic the consumer listens to
-- **Default**: `orders`
-- **Why `orders`**: Standard topic name matching producer
-- **Override Priority**:
-  1. Command-line: `KAFKA_TOPIC=my-topic docker-compose up -d`
-  2. .env file: `KAFKA_TOPIC=my-topic`
-  3. Default: `orders`
-- **Multiple Topics**: Currently supports one topic (future: `topics=topic1,topic2`)
-
-#### Dynamic Topic Configuration
-- **Where It's Used**: `@KafkaListener(topics = "${kafka.consumer.topic}", ...)`
-- **Interpolation**: Spring replaces `${kafka.consumer.topic}` at startup
-- **Immutable**: Topic name cannot be changed without restart
+**Why This Matters:**
+- **Auto-commit enabled** (bad): Offsets committed before processing → message loss on crash
+- **Auto-commit disabled** (good): Offsets committed after processing → guaranteed delivery
 
 ---
 
@@ -149,18 +141,136 @@ Configuration values follow the precedence: **Command-line → Environment Varia
   - `MANUAL`: Commit only when `acknowledgment.acknowledge()` is called
   - `MANUAL_IMMEDIATE`: Commit after `acknowledge()` call returns (immediate)
   - `AUTO`: Automatic commit (NOT ALLOWED for this course)
+  - `BATCH`: Commit when batch is complete
+  - `RECORD`: Commit after each record
 - **Why `MANUAL_IMMEDIATE`**:
   - Precise control: commit happens immediately after state update
   - Synchronous: easier to reason about failure scenarios
   - Safer than `MANUAL` which could lose commits on crash
+  - **Course Requirement (Session 7)**: Demonstrates "commit after processing" pattern
 - **Flow**:
   ```
   Message received → Deserialize → Process → State updated → acknowledge() → Offset committed
   ```
 
-#### `enable-auto-commit=false`
-- **Redundant with MANUAL_IMMEDIATE**: Both ensure manual control
-- **Best Practice**: Set both to be explicit
+**Configuration in Code:**
+
+```java
+@Bean
+public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
+        ConsumerFactory<String, String> consumerFactory) {
+    
+    ConcurrentKafkaListenerContainerFactory<String, String> factory = 
+        new ConcurrentKafkaListenerContainerFactory<>();
+    
+    factory.setConsumerFactory(consumerFactory);
+    factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+    factory.setAutoStartup(false);  // Allows Consumer to run without Kafka
+    
+    return factory;
+}
+```
+
+**Comparison of Acknowledgment Modes:**
+
+| Mode | When Committed | Use Case | Risk |
+|------|---------------|----------|------|
+| **AUTO** | After poll interval | High throughput, can tolerate message loss | Message loss on crash |
+| **RECORD** | After each message | Low latency, minimal redelivery | Higher commit overhead |
+| **BATCH** | After batch complete | Balance throughput & safety | Entire batch redelivered on crash |
+| **MANUAL** | Explicit acknowledge() call | Full control, batching possible | Must manage commits carefully |
+| **MANUAL_IMMEDIATE** | After acknowledge() returns | Full control + immediate commit | Slight overhead per message |
+
+**Our Choice: MANUAL_IMMEDIATE**
+- ✅ Guarantees offset committed after state persisted
+- ✅ Synchronous behavior (predictable)
+- ✅ Idempotency handles redeliveries gracefully
+- ✅ Aligns with course requirement for manual offset management
+
+---
+
+## Topic Configuration and Partition Strategy Interaction
+
+### Consumer-Side Topic Configuration
+
+#### `kafka.consumer.topic=${KAFKA_TOPIC:orders}`
+- **Purpose**: Which Kafka topic the consumer listens to
+- **Default**: `orders`
+- **Why `orders`**: Standard topic name matching producer
+- **Must Match Producer**: Producer publishes to `order-events`, consumer reads from same topic
+- **Override Priority**:
+  1. Command-line: `KAFKA_TOPIC=my-topic docker-compose up -d`
+  2. .env file: `KAFKA_TOPIC=my-topic`
+  3. Default: `orders`
+
+### Partition Strategy and Consumer Scalability
+
+**How Partitions Affect Consumption:**
+
+```
+Topic: order-events (3 partitions)
+Consumer Group: order-service-group
+
+Scenario 1: Single Consumer Instance
+┌─────────────────────┐
+│   Consumer 1        │
+│   Reads: P0, P1, P2 │  ← Sequential processing
+└─────────────────────┘
+Throughput: 1x (baseline)
+
+Scenario 2: Three Consumer Instances (Optimal)
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│ Consumer 1   │  │ Consumer 2   │  │ Consumer 3   │
+│ Reads: P0    │  │ Reads: P1    │  │ Reads: P2    │
+└──────────────┘  └──────────────┘  └──────────────┘
+Throughput: 3x (parallel processing)
+
+Scenario 3: Five Consumer Instances (Over-provisioned)
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────┐  ┌──────────┐
+│ Consumer 1   │  │ Consumer 2   │  │ Consumer 3   │  │ Consumer │  │ Consumer │
+│ Reads: P0    │  │ Reads: P1    │  │ Reads: P2    │  │    4     │  │    5     │
+└──────────────┘  └──────────────┘  └──────────────┘  │  IDLE    │  │  IDLE    │
+                                                        └──────────┘  └──────────┘
+Throughput: 3x (no improvement, wasted resources)
+```
+
+**Key Takeaways:**
+- **Max Parallelism** = Number of Partitions (3 in our case)
+- **Optimal Consumers** = Number of Partitions (1:1 mapping)
+- **Over-provisioning** = Idle consumers (wasted resources)
+- **Under-provisioning** = Some consumers handle multiple partitions (still works)
+
+**Interaction with Message Keying:**
+```
+Producer: orderId as message key
+   ↓
+Kafka: Deterministic partitioning (hash-based)
+   ↓
+Consumer: Reads from assigned partition(s)
+   ↓
+Result: Same orderId always read by same consumer instance
+```
+
+**Ordering Guarantee:**
+- **Within a consumer instance**: Messages from assigned partition(s) processed in order
+- **Across consumer instances**: No global ordering (different partitions processed in parallel)
+- **For same orderId**: Always same partition → same consumer → strict ordering
+
+**Scalability Pattern:**
+```
+Low Traffic:
+  1 consumer + 3 partitions = Works, but underutilized
+
+Medium Traffic:
+  2 consumers + 3 partitions = One handles 2 partitions, one handles 1
+
+High Traffic:
+  3 consumers + 3 partitions = Optimal, 1:1 mapping
+
+Need More Throughput?
+  Increase partitions to 6 → Deploy 6 consumers
+  (Requires topic reconfiguration and consumer restart)
+```
 
 ---
 

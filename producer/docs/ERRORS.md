@@ -2,25 +2,304 @@
 
 The Producer (Cart Service) implements a layered error handling strategy across the **API Layer**, **Service Layer**, and **Infrastructure Layer** to ensure reliability and data integrity.
 
+**Course Context**: This error handling strategy aligns with **Session 8 - Error Handling & Resilience** from the MTA Event-Driven Architecture course, implementing patterns for broker connectivity issues, retry logic, and data safety.
+
+---
+
+## Error Handling Architecture Overview
+
+```mermaid
+flowchart TD
+    Client[Client Request]
+    API[API Layer<br/>OrderController]
+    Service[Service Layer<br/>OrderService]
+    Kafka[Infrastructure Layer<br/>KafkaProducerService]
+    CB[Circuit Breaker<br/>Resilience4j]
+    Broker[Kafka Broker]
+    
+    Client -->|HTTP Request| API
+    API -->|Validate| API
+    API -->|Business Logic| Service
+    Service -->|Send Message| Kafka
+    Kafka -->|Check Failure Rate| CB
+    CB -->|Attempt Send| Broker
+    
+    Broker -.->|Success ACK| CB
+    Broker -.->|Timeout/Error| CB
+    
+    CB -.->|Success| Kafka
+    CB -.->|Failure| Fallback[Fallback Method]
+    CB -.->|Circuit Open| Fallback
+    
+    Fallback -->|Log Failed Order| DLQ[Failed Orders Log]
+    Fallback -->|Rollback State| Service
+    Fallback -->|Throw Exception| Handler[GlobalExceptionHandler]
+    
+    Handler -->|HTTP 500/503| Client
+    
+    style API fill:#e1f5ff
+    style Service fill:#ffe1f5
+    style Kafka fill:#ffe1e1
+    style CB fill:#fff4e1
+    style Handler fill:#f5e1ff
+```
+
 ---
 
 ## 1. Infrastructure & Kafka Errors (The "Active" Layer)
 
 These errors involve connection to the broker and message delivery. The system handles them through a multi-stage recovery process.
 
-### Level 1: Synchronous Online Retry (Response Accuracy)
-- **Action**: The producer is configured for **indefinite retries** (`retries=2147483647`) within a fixed time window.
-- **Time Limit**: Kafka will attempt to deliver the message for **8 seconds** (`delivery.timeout.ms=8000`).
-- **Per-Attempt Timeout**: Each individual request attempt times out after **3 seconds** (`request.timeout.ms=3000`), allowing for ~2-3 retry attempts within the 8s window.
-- **Goal**: Ensure that if a user receives a failure response (after the 10s API timeout), the Kafka client has **already stopped** trying to send the message. This prevents "Ghost Successes" where an order lands in Kafka after the user was told it failed.
-- **API Response**: Returns **500 Internal Server Error**. Architectural Reasoning: A failed send during an active request is an unexpected server condition.
+### Kafka Connectivity Monitoring
 
+**HealthService Implementation:**
+
+The Producer implements proactive Kafka connectivity monitoring through health check endpoints:
+
+- **Readiness Probe** (`GET /cart-service/health/ready`):
+  - Checks Kafka broker connectivity before accepting traffic
+  - Tests topic existence and accessibility
+  - Returns **503 Service Unavailable** if Kafka is unreachable
+  - Used by load balancers/Kubernetes to route traffic only to healthy instances
+
+- **Liveness Probe** (`GET /cart-service/health/live`):
+  - Checks internal service health (JVM responsiveness)
+  - Always returns **200 OK** if service process is running
+  - Does not depend on Kafka availability
+
+**Health Check Flow:**
+
+```mermaid
+sequenceDiagram
+    participant LB as Load Balancer
+    participant Health as HealthService
+    participant Kafka as Kafka Broker
+    participant API as OrderController
+
+    Note over LB,API: Readiness Check Flow
+    
+    LB->>+Health: GET /health/ready
+    Health->>+Kafka: Test connection (1s timeout)
+    
+    alt Kafka is UP
+        Kafka-->>-Health: Connection successful
+        Health-->>-LB: HTTP 200 OK<br/>{status: "UP", kafka: "accessible"}
+        Note over LB: Route traffic to this instance
+    else Kafka is DOWN
+        Kafka-->>Health: Timeout / Connection refused
+        Health-->>LB: HTTP 503 Service Unavailable<br/>{status: "DOWN", kafka: "unavailable"}
+        Note over LB: Remove instance from pool
+    end
+    
+    Note over LB,API: Liveness Check Flow
+    
+    LB->>+Health: GET /health/live
+    Health-->>-LB: HTTP 200 OK<br/>{status: "UP", service: "responsive"}
+    Note over LB: Keep instance running
+```
+
+**API Response Codes When Kafka is Unreachable:**
+
+1. **Health Endpoint**: Returns **503 Service Unavailable**
+   - Indicates service is alive but not ready to handle requests
+   - Load balancer stops routing traffic to this instance
+   
+2. **Order Creation/Update Endpoints**: Return **500 Internal Server Error** or **503 Service Unavailable**
+   - **500**: Kafka timeout after exhausting retries (unexpected server condition)
+   - **503**: Circuit Breaker open (service protecting itself from cascade failure)
+   - Client should implement retry logic with exponential backoff
+
+---
+
+### Level 1: Synchronous Online Retry (Response Accuracy)
+
+**Implementation**: Kafka Producer Client with Internal Retries
+
+- **Action**: The producer is configured for **12 retries** within a **120-second window** (`delivery.timeout.ms=120000`).
+- **Per-Attempt Timeout**: Each individual request attempt times out after **5 seconds** (`request.timeout.ms=5000`).
+- **Application Timeout**: API blocks for **10 seconds** (`producer.send.timeout.ms=10000`).
+- **Goal**: Ensure that if a user receives a failure response (after the 10s API timeout), the Kafka client has **already stopped** trying to send the message. This prevents "Ghost Successes" where an order lands in Kafka after the user was told it failed.
+- **API Response**: Returns **500 Internal Server Error**. 
+- **Architectural Reasoning**: A failed send during an active request is an unexpected server condition.
+
+**Retry Flow:**
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as OrderController
+    participant Service as KafkaProducerService
+    participant KafkaClient as Kafka Producer Client
+    participant Broker as Kafka Broker
+
+    Client->>+API: POST /create-order
+    API->>+Service: sendOrder(orderId, order)
+    Service->>+KafkaClient: send(topic, key, value).get(10s)
+    
+    Note over KafkaClient,Broker: Retry Loop (Internal to Kafka Client)
+    
+    KafkaClient->>Broker: Attempt 1 (immediate)
+    Broker-->>KafkaClient: Timeout (no response)
+    
+    Note over KafkaClient: Wait 100ms (retry.backoff.ms)
+    KafkaClient->>Broker: Retry 1
+    Broker-->>KafkaClient: Timeout
+    
+    Note over KafkaClient: Wait 200ms (exponential backoff)
+    KafkaClient->>Broker: Retry 2
+    Broker-->>KafkaClient: Timeout
+    
+    Note over KafkaClient: Wait 400ms
+    KafkaClient->>Broker: Retry 3
+    Broker-->>KafkaClient: Timeout
+    
+    Note over KafkaClient: Total time: ~10 seconds<br/>Application timeout reached
+    
+    KafkaClient-->>-Service: TimeoutException
+    Service->>Service: Log failed order to failed-orders.log
+    Service-->>-API: ServiceUnavailableException
+    API-->>-Client: HTTP 500 Internal Server Error
+
+    Note over Client: Client knows order failed<br/>No "ghost success" in Kafka
+```
+
+**Exponential Backoff Schedule:**
+```
+Attempt 1:  0ms    (immediate)
+Retry 1:    100ms
+Retry 2:    200ms  (100 * 2^1)
+Retry 3:    400ms  (100 * 2^2)
+Retry 4:    800ms
+Retry 5:    1.6s
+Retry 6:    3.2s
+Retry 7:    6.4s
+Retry 8:    12.8s
+Retry 9:    25.6s
+Retry 10:   51.2s
+Retry 11:   102.4s (capped before delivery timeout)
+
+Total retry window: ~60 seconds
+Application timeout: 10 seconds (prevents ghost successes)
+Max delivery timeout: 120 seconds (safety buffer)
+```
+
+**Why This Works:**
+- Application timeout (10s) < Kafka's internal retry window (60s)
+- If application timeout fires, Kafka client stops retrying
+- No message arrives in Kafka after client receives error response
+- Guarantees client knows the outcome: either success or definitive failure
+
+---
 ### Level 2: Circuit Breaker (Fail-Fast Mechanism)
+
+**Implementation**: Resilience4j Circuit Breaker
+
 - **Action**: Protected by **Resilience4j**, the system monitors the failure rate of Kafka calls.
 - **Tripping the Circuit**: If **50% of calls fail** within a sliding window of 10 attempts, the circuit opens for **30 seconds**.
 - **Behavior**: When the circuit is **OPEN**, the system immediately rejects new Kafka calls without attempting them, protecting application threads from exhaustion.
-- **API Response**: Returns **503 Service Unavailable**. Architectural Reasoning: 503 indicates a temporary state where the service is protecting itself.
+- **API Response**: Returns **503 Service Unavailable**. 
+- **Architectural Reasoning**: 503 indicates a temporary state where the service is protecting itself.
 
+**Circuit Breaker States:**
+
+```mermaid
+stateDiagram-v2
+    [*] --> CLOSED: Initial State
+    CLOSED --> OPEN: Failure Rate >= 50%<br/>(10 calls in window)
+    OPEN --> HALF_OPEN: After 30 seconds<br/>(wait duration)
+    HALF_OPEN --> CLOSED: Test calls succeed<br/>(2/3 pass)
+    HALF_OPEN --> OPEN: Test calls fail<br/>(2/3 fail)
+    CLOSED --> CLOSED: Success Rate OK
+    
+    note right of CLOSED
+        Normal Operation
+        All requests attempted
+        Monitoring failure rate
+    end note
+    
+    note right of OPEN
+        Fail-Fast Mode
+        Immediate rejection
+        No Kafka calls attempted
+        Returns 503 immediately
+    end note
+    
+    note right of HALF_OPEN
+        Testing Recovery
+        Limited requests allowed
+        Evaluates broker health
+    end note
+```
+
+**Circuit Breaker Flow:**
+
+```mermaid
+sequenceDiagram
+    participant Client1 as Client Request 1
+    participant Client2 as Client Request 2
+    participant CB as Circuit Breaker
+    participant Kafka as KafkaProducerService
+    participant Broker as Kafka Broker
+
+    Note over CB: State: CLOSED (Normal)
+    
+    Client1->>+CB: create-order (Request 1)
+    CB->>+Kafka: Forward to sendOrder()
+    Kafka->>Broker: Attempt send
+    Broker-->>Kafka: Timeout
+    Kafka-->>-CB: Exception
+    CB-->>-Client1: HTTP 500
+    
+    Note over CB: Failure count: 1/10
+    
+    Client2->>+CB: create-order (Request 2-5)
+    CB->>Kafka: Forward
+    Kafka->>Broker: Attempt send
+    Broker-->>Kafka: Timeout
+    Kafka-->>CB: Exception
+    CB-->>-Client2: HTTP 500
+    
+    Note over CB: Failure count: 5/10<br/>Failure rate: 50%<br/>Circuit OPENS
+    
+    Note over CB: State: OPEN<br/>(Kafka calls blocked)
+    
+    Client1->>+CB: create-order (Request 6)
+    CB->>CB: Circuit is OPEN
+    CB-->>-Client1: HTTP 503 Service Unavailable<br/>(Circuit Breaker Open)
+    
+    Note over CB: No Kafka call attempted!<br/>Immediate fast-fail
+    
+    Note over CB: Wait 30 seconds...
+    
+    Note over CB: State: HALF_OPEN<br/>(Testing recovery)
+    
+    Client2->>+CB: create-order (Test Request)
+    CB->>+Kafka: Forward (limited test)
+    Kafka->>Broker: Attempt send
+    Broker-->>Kafka: Success ACK
+    Kafka-->>-CB: Success
+    CB-->>-Client2: HTTP 201 Created
+    
+    Note over CB: Test successful<br/>Circuit CLOSES
+    
+    Note over CB: State: CLOSED<br/>(Normal operation resumed)
+```
+
+**Configuration:**
+```properties
+resilience4j.circuitbreaker.instances.cartService.failureRateThreshold=50
+resilience4j.circuitbreaker.instances.cartService.slidingWindowSize=10
+resilience4j.circuitbreaker.instances.cartService.waitDurationInOpenState=30s
+resilience4j.circuitbreaker.instances.cartService.permittedNumberOfCallsInHalfOpenState=3
+```
+
+**Benefits:**
+- ✅ Protects application threads from hanging on unavailable Kafka broker
+- ✅ Fast-fail reduces client wait time (immediate 503 vs 10s timeout)
+- ✅ Automatic recovery testing (half-open state)
+- ✅ Prevents cascade failures to upstream services
+
+---
 ### Level 3: Data Safety (Manual Recovery Fallback)
 - **Action**: If the timeout is reached OR the Circuit Breaker is open, the system logs the **full order details** to a dedicated `failed-orders.log` file.
 - **Implementation**: A dedicated logger (`FAILED_ORDERS_LOGGER`) captures the order payload and failure reason.
