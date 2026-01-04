@@ -470,14 +470,14 @@ Handled at the service level before any message is sent to Kafka.
 - Background monitoring continuously attempts reconnection with exponential backoff
 
 **API Response (during order creation/update)**:
-- **Status**: `503 Service Unavailable`
+- **Status**: `500 Internal Server Error`
 - **Error Type**: `KAFKA_DOWN`
 - **Response Body**:
 ```json
 {
   "timestamp": "2026-01-04T12:34:56.789Z",
-  "error": "Service Unavailable",
-  "message": "Message broker is unreachable or timed out",
+  "error": "Internal Server Error",
+  "message": "The server encountered an error while publishing the order event.",
   "path": "/cart-service/create-order",
   "details": {
     "type": "KAFKA_DOWN",
@@ -510,8 +510,8 @@ HTTP Status: **503 Service Unavailable**
 
 **Architectural Reasoning**:
 - This is a **temporary infrastructure issue**, not a configuration error
-- Returns 503 (Service Unavailable) to indicate transient failure - client should retry
-- **Circuit Breaker Integration**: After repeated failures, circuit opens (CIRCUIT_BREAKER_OPEN)
+- Returns 500 (Internal Server Error) because the send operation failed unexpectedly during request processing
+- **Circuit Breaker Integration**: After repeated failures, circuit opens (returns 503 CIRCUIT_BREAKER_OPEN)
 - **Auto-Recovery**: Background monitoring continuously retries with exponential backoff
 - Once Kafka is restored, service automatically recovers without restart
 
@@ -572,12 +572,12 @@ The system includes proactive monitoring to prevent failures before they occur.
 }
 ```
 
-### 503 Service Unavailable (Kafka Down)
+### 500 Internal Server Error (Kafka Down)
 ```json
 {
   "timestamp": "2026-01-04T12:00:00.000Z",
-  "error": "Service Unavailable",
-  "message": "Message broker is unreachable or timed out",
+  "error": "Internal Server Error",
+  "message": "The server encountered an error while publishing the order event.",
   "path": "/cart-service/create-order",
   "details": {
     "type": "KAFKA_DOWN",

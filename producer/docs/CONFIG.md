@@ -26,6 +26,7 @@ The Producer is configured to satisfy three critical requirements:
 ### Server
 - `spring.application.name=producer`
 - `server.port=8081` - Producer API port (Cart Service)
+- `spring.web.resources.add-mappings=false` - Disable static resource handling, ensures 404s go through ControllerAdvice
 
 ### Logging
 - `logging.level.root=INFO` - Default log level
@@ -563,9 +564,11 @@ KAFKA_BOOTSTRAP_SERVERS=general:9092
 - `src/main/java/mta/eda/producer/config/KafkaTopicConfig.java` - Topic creation & configuration
 
 ### Service Classes
-- `src/main/java/mta/eda/producer/service/kafka/KafkaProducerService.java` - Message publishing
-- `src/main/java/mta/eda/producer/service/kafka/KafkaHealthService.java` - Health checks
-- `src/main/java/mta/eda/producer/controller/OrderController.java` - REST endpoints
+- `src/main/java/mta/eda/producer/service/kafka/KafkaProducerService.java` - Message publishing with Circuit Breaker
+- `src/main/java/mta/eda/producer/service/kafka/KafkaConnectivityService.java` - Background Kafka monitoring and connectivity checks
+- `src/main/java/mta/eda/producer/service/general/HealthService.java` - Health check endpoints
+- `src/main/java/mta/eda/producer/service/order/OrderService.java` - Order business logic and state management
+- `src/main/java/mta/eda/producer/controller/OrderController.java` - REST API endpoints
 
 ---
 
