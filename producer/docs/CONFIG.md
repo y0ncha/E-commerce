@@ -26,6 +26,7 @@ The Producer is configured to satisfy three critical requirements:
 ### Server
 - `spring.application.name=producer`
 - `server.port=8081` - Producer API port (Cart Service)
+- `spring.web.resources.add-mappings=false` - Disable static resource handling, ensures 404s go through ControllerAdvice
 
 ### Logging
 - `logging.level.root=INFO` - Default log level
@@ -73,35 +74,24 @@ The Producer is configured to satisfy three critical requirements:
   - **Note:** Automatically sets `acks=all`, `retries=MAX_INT`, `max.in.flight.requests=5`
 
 ### Retry Configuration
-- `spring.kafka.producer.retries=12`
+- `spring.kafka.producer.retries=2147483647` (Integer.MAX_VALUE)
   - **Purpose:** Number of times to retry failed sends on transient errors
-  - **Increased from 3 to 12** for better network partition handling
+  - **Set to MAX_INT** to allow Kafka to retry until delivery.timeout.ms is reached
   - **Safe:** Idempotence enabled prevents duplicate messages on retries
 - `spring.kafka.producer.properties.retry.backoff.ms=100`
   - **Purpose:** Initial backoff delay before first retry
   - **Strategy:** Exponential backoff (Kafka multiplies by 2 between retries)
-  - **Retry sequence (actual delays):**
-    ```
-    Attempt 1: 0ms (immediate)
-    Retry 1:   100ms
-    Retry 2:   200ms (100 * 2^1)
-    Retry 3:   400ms (100 * 2^2)
-    Retry 4:   800ms
-    Retry 5:   1.6s
-    Retry 6:   3.2s
-    Retry 7:   6.4s
-    Retry 8:   12.8s
-    Retry 9:   25.6s
-    Retry 10:  51.2s
-    Retry 11:  102.4s (capped before delivery timeout)
-    ```
-  - **Total retry window:** ~60 seconds (covers most network partition recovery)
-  - **Validation:** Fits comfortably within `delivery.timeout.ms=120000`
+  - **Retry behavior:** Retries until `delivery.timeout.ms` (8000ms) is reached
+  - **Exponential backoff pattern:** 100ms → 200ms → 400ms → 800ms → 1.6s → 3.2s → ...
+  - **Total retry window:** ~8 seconds (delivery timeout limit)
+  - **Note:** With MAX_INT retries, the actual limit is controlled by delivery.timeout.ms
 
 ### Ordering Guarantees
-- `max.in.flight.requests.per.connection` - **Not explicitly set** (defaults to 5 with idempotence)
-  - **With idempotence enabled:** Up to 5 in-flight requests while preserving order
+- `spring.kafka.producer.properties.max.in.flight.requests.per.connection=1`
+  - **Purpose:** Ensures strict ordering by allowing only 1 unacknowledged request at a time
+  - **Trade-off:** Lower throughput but guarantees absolute ordering within a partition
   - **Key-based partitioning:** Messages with same key (orderId) go to same partition in order
+  - **Note:** More restrictive than the default (5 with idempotence) for stronger ordering guarantees
 
 ### Performance Tuning
 - `spring.kafka.producer.properties.batch.size=16384` (16 KB)
@@ -116,25 +106,28 @@ The Producer is configured to satisfy three critical requirements:
   - **Trade-off:** CPU usage vs network bandwidth
 
 ### Timeouts
-- `spring.kafka.producer.properties.request.timeout.ms=5000` (5s)
-  - **Purpose:** Max time to wait for broker response per request
-- `spring.kafka.producer.properties.delivery.timeout.ms=120000` (120s)
-  - **Purpose:** Upper bound for entire send operation (including retries)
-  - **Formula:** Must be > `request.timeout.ms * (retries + 1) + linger.ms`
-  - **Validation:** `120000 > 5000 * 4 + 5 = 20005` ✅
+- `spring.kafka.producer.properties.request.timeout.ms=3000` (3s)
+  - **Purpose:** Max time to wait for broker response per request attempt
+- `spring.kafka.producer.properties.delivery.timeout.ms=8000` (8s)
+  - **Purpose:** Upper bound for entire send operation (including all retries)
+  - **Ensures:** Kafka client stops retrying before API timeout (10s) to prevent ghost successes
+  - **Formula:** Must be >= `linger.ms + request.timeout.ms`
+  - **Validation:** `8000 >= 5 + 3000 = 3005` ✅
 - `spring.kafka.producer.properties.max.block.ms=5000` (5s)
   - **Purpose:** Max time to block waiting for metadata/buffer space
 - `producer.send.timeout.ms=10000` (10s, custom property)
   - **Purpose:** Timeout for `.send().get()` calls in application code
+  - **Synchronous Retry Strategy:** API waits up to 10s, but Kafka stops at 8s to ensure no ghost successes
   - **Location:** `KafkaProducerService.java`
 
 ---
 
 ## Topic Configuration
 
-- `kafka.topic.name=order-events`
+- `kafka.topic.name=orders`
   - **Purpose:** Topic name for all order events
-  - **Why This Name:** Descriptive name indicating event-driven architecture
+  - **Critical:** Must match consumer topic name for message delivery to work
+  - **Note:** Both producer and consumer must use the same topic: "orders"
   
 - `kafka.topic.partitions=3`
   - **Purpose:** Number of partitions for parallel processing
@@ -262,25 +255,27 @@ SendResult<String, Order> result = kafkaTemplate.send(topicName, orderId, order)
 - `management.endpoint.health.probes.enabled=true`
   - **Purpose:** Enable Kubernetes liveness/readiness probes
 
-### Custom Health Properties
-- `producer.health.timeout.ms=1000` (1s, default if not set)
-  - **Purpose:** Timeout for Kafka health checks
-  - **Location:** `KafkaHealthService.java`
-- `producer.health.cache.ttl.ms=2000` (2s, default if not set)
-  - **Purpose:** Cache health check results to avoid spamming Kafka
-  - **Location:** `KafkaHealthService.java`
+### Health Check Behavior
+- **Background Monitoring:** `KafkaConnectivityService` continuously monitors Kafka with exponential backoff
+  - Initial retry: 100ms → 200ms → 400ms → 800ms → 1.6s → 3.2s → 5s (max)
+  - Healthy state: checks every 30 seconds
+  - Connection lost: immediately switches to aggressive retry mode
+- **Fresh Ping on Health Checks:** Each health endpoint call triggers a fresh Kafka ping (3s timeout, no retries)
+  - Updates cached status if Kafka state changed
+  - Ensures health status reflects current state, not stale data
 
 ### Health Endpoints
 - **GET `/cart-service/health/live`**
-  - Always returns 200 OK (checks service only)
+  - Always returns 200 OK (checks service responsiveness only)
   - No Kafka dependency
+  - Used by orchestrators to detect if service process is alive
 - **GET `/cart-service/health/ready`**
-  - **Fresh Status Check**: Pings Kafka before responding (no retries, single attempt)
-  - Updates cached status if Kafka state changed
-  - Returns 200 OK if Kafka reachable + topic exists
-  - Returns 503 Service Unavailable if Kafka down
+  - **Fresh Status Check:** Pings Kafka before responding (single attempt, 3s timeout)
+  - Updates cached status if Kafka state changed since last check
+  - Returns 200 OK if Kafka reachable AND topic exists
+  - Returns 503 Service Unavailable if Kafka down or topic not found
   - Fast response (~3 seconds max for ping)
-  - Ensures health status is always current, not stale
+  - Used by load balancers to route traffic only to healthy instances
 
 ---
 
@@ -525,15 +520,19 @@ All events for same orderId → Same partition → Guaranteed ordering
 
 1. **Application sends** message via `KafkaProducerService.sendOrder()`
 2. **Kafka client attempts** send with configured settings:
-   - If fails: retry up to 12 times with exponential backoff
-     - Delays: 100ms → 200ms → 400ms → 800ms → 1.6s → 3.2s → 6.4s → 12.8s → 25.6s → ...
+   - If fails: retry continuously with exponential backoff until 8s delivery timeout
+     - Initial delays: 100ms → 200ms → 400ms → 800ms → 1.6s → 3.2s → ...
    - Idempotence prevents duplicates
-   - Max 120s total delivery timeout
-3. **Application blocks** on `.get(10000)` waiting for result
+   - Max 8s total delivery timeout (less than 10s API timeout to prevent ghost successes)
+3. **Application blocks** on `.get(10000)` waiting for result (max 10s)
 4. **On success:** Return 201/200 to client
-5. **On failure:** Throw `ProducerSendException` → 500 error
+5. **On timeout/failure:** 
+   - Kafka client has already stopped retrying (at 8s)
+   - Throws `ServiceUnavailableException` or `TopicNotFoundException`
+   - Returns 500 or 503 to client
 
 **No manual retry loops** - all handled by Kafka client internally with exponential backoff.
+**Ghost Success Prevention:** Delivery timeout (8s) < API timeout (10s) ensures client knows true outcome.
 
 ---
 
@@ -565,19 +564,24 @@ KAFKA_BOOTSTRAP_SERVERS=general:9092
 - `src/main/java/mta/eda/producer/config/KafkaTopicConfig.java` - Topic creation & configuration
 
 ### Service Classes
-- `src/main/java/mta/eda/producer/service/kafka/KafkaProducerService.java` - Message publishing
-- `src/main/java/mta/eda/producer/service/kafka/KafkaHealthService.java` - Health checks
-- `src/main/java/mta/eda/producer/controller/OrderController.java` - REST endpoints
+- `src/main/java/mta/eda/producer/service/kafka/KafkaProducerService.java` - Message publishing with Circuit Breaker
+- `src/main/java/mta/eda/producer/service/kafka/KafkaConnectivityService.java` - Background Kafka monitoring and connectivity checks
+- `src/main/java/mta/eda/producer/service/general/HealthService.java` - Health check endpoints
+- `src/main/java/mta/eda/producer/service/order/OrderService.java` - Order business logic and state management
+- `src/main/java/mta/eda/producer/controller/OrderController.java` - REST API endpoints
 
 ---
 
 ## Docker Deployment
 
 ### Network Configuration
-- **Network Name**: `producer_ecommerce-network`
+- **Network Name**: `ecommerce-network` (defined in docker-compose.yml)
+  - Docker Compose will prefix this with the project directory name at runtime
+  - For example, when running from the `producer` directory: `producer_ecommerce-network`
 - **Type**: Bridge network
 - **Purpose**: Shared network for Zookeeper, Kafka, and Cart Service
 - **Consumer Access**: Consumer can join this network to access Kafka
+- **Finding the actual network name**: Run `docker network ls` to see the prefixed name
 
 ### Service Ports
 - **Kafka External**: `9092` (host machine access)
@@ -605,9 +609,9 @@ KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9
 | Property Category | Key Settings |
 |-------------------|--------------|
 | **Durability** | `acks=all`, `enable.idempotence=true` |
-| **Ordering** | Idempotence enabled, key-based partitioning |
-| **Retries** | `retries=12`, exponential backoff (100ms → 25.6s) |
+| **Ordering** | `max.in.flight.requests=1`, key-based partitioning |
+| **Retries** | `retries=MAX_INT`, exponential backoff until 8s timeout |
 | **Latency** | `linger.ms=5` (batch for throughput) |
 | **Throughput** | `batch.size=16384`, `compression.type=snappy` |
-| **Timeouts** | `request=5s`, `delivery=120s`, `send=10s` |
-| **Health** | Cache 2s, timeout 1s |
+| **Timeouts** | `request=3s`, `delivery=8s`, `api=10s` |
+| **Health** | Background monitoring with fresh ping, 3s timeout |
