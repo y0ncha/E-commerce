@@ -19,10 +19,15 @@ public class HealthService {
     }
 
     /**
-     * Get Kafka status from background monitoring service (instant response - no blocking).
-     * Status is updated asynchronously every 1s until healthy, then every 30s.
+     * Get Kafka status with fresh ping check (non-blocking, single attempt).
+     * Pings Kafka to verify current status and updates cache if changed.
+     * Uses cached status if ping confirms no change.
      */
     public HealthCheck getKafkaStatus() {
+        // Ping Kafka to get fresh status (updates cache if changed)
+        kafkaConnectivityService.pingKafka();
+
+        // Return current status (potentially just updated by ping)
         boolean healthy = kafkaConnectivityService.isHealthy();
         String details = kafkaConnectivityService.getDetailedStatus();
         return new HealthCheck(

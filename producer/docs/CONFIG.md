@@ -275,9 +275,12 @@ SendResult<String, Order> result = kafkaTemplate.send(topicName, orderId, order)
   - Always returns 200 OK (checks service only)
   - No Kafka dependency
 - **GET `/cart-service/health/ready`**
+  - **Fresh Status Check**: Pings Kafka before responding (no retries, single attempt)
+  - Updates cached status if Kafka state changed
   - Returns 200 OK if Kafka reachable + topic exists
   - Returns 503 Service Unavailable if Kafka down
-  - Checks both service and Kafka
+  - Fast response (~3 seconds max for ping)
+  - Ensures health status is always current, not stale
 
 ---
 
@@ -290,7 +293,10 @@ The `KafkaConnectivityService` provides **continuous background monitoring** of 
 - **Exponential Backoff Retry**: Powered by Resilience4j with intelligent retry intervals
 - **Pre-cached Status**: Instant health check responses (no blocking API calls)
 - **Persistent Retry**: Never gives up - continuously retries until connection restored
-- **Topic Detection**: Specifically detects missing topic vs. broker down scenarios
+- **Intelligent Error Detection**: Two-pass approach to distinguish between:
+  - **KAFKA_DOWN**: Connection/timeout errors (broker unreachable)
+  - **TOPIC_NOT_FOUND**: Topic doesn't exist (broker reachable but topic missing)
+- **Topic Detection**: Verifies topic exists and has ready partitions with leaders
 
 ### Retry Strategy
 The service uses **exponential backoff** with the following characteristics:
@@ -305,6 +311,66 @@ The service uses **exponential backoff** with the following characteristics:
 - Once connected and topic ready: checks every **30 seconds**
 - If connection lost: immediately switches back to aggressive retry mode
 - If topic missing: keeps checking every **1 second**
+
+### Error Detection Strategy
+The `KafkaConnectivityService` uses a **two-pass detection approach** to accurately classify errors:
+
+**Pass 1 - Rule Out Connection Issues:**
+- Checks for `TimeoutException`, `IOException`, connection refused errors
+- If found with timeout/connection messages → Returns `KAFKA_DOWN`
+- Prevents false positives where metadata errors are mistaken for topic issues
+
+**Pass 2 - Check for Topic Issues:**
+- Only after ruling out connection problems
+- Checks for `UnknownTopicOrPartitionException`
+- If found → Returns `TOPIC_NOT_FOUND`
+
+**Why This Matters:**
+- **Accurate Diagnostics**: Operators know if it's infrastructure (Kafka down) vs. configuration (topic missing)
+- **Correct HTTP Status**: 
+  - KAFKA_DOWN → 503 (temporary, retry later)
+  - TOPIC_NOT_FOUND → 500 (configuration error, needs admin action)
+- **Better Monitoring**: Alerts can distinguish between transient and persistent issues
+
+### Health Check Ping Mechanism
+When health endpoints are called, the service performs a **fresh ping** to Kafka to ensure status is current:
+
+**How It Works:**
+1. **On-Demand Check**: When `/health/ready` is called, `pingKafka()` executes
+2. **Single Attempt**: No retries, just one quick connectivity test (3 second timeout)
+3. **Status Update**: If Kafka state changed (e.g., went from UP to DOWN), cache is updated immediately
+4. **Return Fresh Status**: Health endpoint returns the most current status
+
+**Benefits:**
+- **No Stale Data**: Health checks reflect actual current state, not cached state from 30s ago
+- **Fast Detection**: Status changes detected immediately when health endpoint is called
+- **Orchestrator-Friendly**: Kubernetes/Docker get accurate readiness immediately
+- **No Overhead**: Only pings when health endpoint is called, not continuously
+
+**Example Scenario:**
+```
+1. Background monitor checks Kafka at 10:00:00 → Status: UP
+2. Kafka crashes at 10:00:15
+3. Health check called at 10:00:20:
+   - pingKafka() detects Kafka is DOWN (fresh check)
+   - Updates cache: kafkaConnected = false
+   - Returns 503 Service Unavailable immediately
+4. No need to wait for next background check (which would be at 10:00:30)
+```
+
+**Implementation:**
+```java
+// HealthService.java
+public HealthCheck getKafkaStatus() {
+    // Ping Kafka to get fresh status (updates cache if changed)
+    kafkaConnectivityService.pingKafka();
+    
+    // Return current status (potentially just updated by ping)
+    boolean healthy = kafkaConnectivityService.isHealthy();
+    String details = kafkaConnectivityService.getDetailedStatus();
+    return new HealthCheck(healthy ? "UP" : "DOWN", details);
+}
+```
 
 ### Topic Auto-Creation Mechanism
 The `KafkaTopicConfig` class defines a `NewTopic` bean that automatically creates the topic on application startup:

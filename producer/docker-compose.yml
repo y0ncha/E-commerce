@@ -48,6 +48,8 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # Disable auto topic creation - force explicit topic definition via NewTopic beans
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
     networks:
       - ecommerce-network
 

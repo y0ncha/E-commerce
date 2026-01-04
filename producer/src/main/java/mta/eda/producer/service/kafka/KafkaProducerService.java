@@ -56,12 +56,17 @@ public class KafkaProducerService {
 
         } catch (Exception e) {
             // Check if the cause chain contains UnknownTopicOrPartitionException
+
+            // This check distinguishes between:
+            // 1. TOPIC_NOT_FOUND: Kafka is reachable, but the specific topic doesn't exist
+            // 2. KAFKA_DOWN: Kafka is unreachable (connection/timeout errors)
             if (connectivityService.isTopicNotFoundException(e)) {
                 logFailedOrder("TOPIC_NOT_FOUND", orderId, order, "Topic '" + topicName + "' does not exist");
                 throw new TopicNotFoundException(topicName, orderId,
                         "Topic '" + topicName + "' does not exist and auto-creation is disabled", e);
             }
 
+            // If not a topic issue, it's a general Kafka connectivity problem
             logFailedOrder("KAFKA_FAILURE", orderId, order, e.getMessage());
             
             // Throw specific exception for the fallback/handler to catch

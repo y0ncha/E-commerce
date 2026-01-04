@@ -19,8 +19,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -129,9 +131,17 @@ public class OrderController {
         HealthCheck kafkaStatus = healthService.getKafkaStatus();
         HealthCheck stateStatus = healthService.getLocalStateStatus();
 
-        // Core readiness is determined by the service itself and local state store.
-        // Kafka may be temporarily unavailable, but the HTTP API can still serve requests.
-        boolean coreUp = "UP".equals(serviceStatus.status()) && "UP".equals(stateStatus.status());
+        // Readiness is determined by the service, local state store, AND Kafka availability.
+        // Consumer cannot function without Kafka, so readiness check must include it.
+        boolean serviceUp = "UP".equals(serviceStatus.status());
+        boolean stateUp = "UP".equals(stateStatus.status());
+        boolean kafkaUp = "UP".equals(kafkaStatus.status());
+
+        // Consider DEGRADED Kafka as acceptable for readiness (temporary issues)
+        // but DOWN Kafka means the consumer is not ready
+        boolean kafkaAvailable = kafkaUp || "DEGRADED".equals(kafkaStatus.status());
+
+        boolean ready = serviceUp && stateUp && kafkaAvailable;
 
         Map<String, HealthCheck> checks = Map.of(
             "service", serviceStatus,
@@ -142,13 +152,13 @@ public class OrderController {
         HealthResponse response = new HealthResponse(
             "Order Service (Consumer)",
             "readiness",
-            coreUp ? "UP" : "DOWN",
+            ready ? "UP" : "DOWN",
             Instant.now().toString(),
             checks
         );
 
-        // Keep HTTP 200 when core is healthy, even if Kafka is DOWN (degraded but usable).
-        HttpStatus httpStatus = coreUp ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE;
+        // Return 503 when not ready (including when Kafka is DOWN)
+        HttpStatus httpStatus = ready ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE;
         return ResponseEntity.status(httpStatus).body(response);
     }
 
@@ -265,22 +275,34 @@ public class OrderController {
     }
 
     /**
-     * Debug endpoint - Get all stored order IDs.
-     * Useful for troubleshooting: shows all orders the consumer has processed.
-     * @return List of all order IDs in local storage
+     * Debug endpoint - Get all stored messages sorted by arrival time.
+     * Shows only time, order ID, and status for all messages.
+     * @return List of all messages with timestamp, orderId, and status
      */
-    @GetMapping("/debug/all-orders")
-    public ResponseEntity<Map<String, Object>> getAllStoredOrders() {
-        logger.info("Debug: Fetching all stored orders");
+    @GetMapping("/debug/all-messages")
+    public ResponseEntity<Map<String, Object>> getAllMessages() {
+        logger.info("Debug: Fetching all messages sorted by time");
 
-        Map<String, ProcessedOrder> allOrders = orderService.getAllProcessedOrders();
+        List<ProcessedOrder> allMessages = orderService.getAllMessages();
+
+        // Create list of messages with only time, orderId, and status, sorted by time
+        List<Map<String, String>> messages = allMessages.stream()
+                .sorted(Comparator.comparing(ProcessedOrder::receivedAt))
+                .map(po -> {
+                    Map<String, String> message = new LinkedHashMap<>();
+                    message.put("time", po.receivedAt().toString());
+                    message.put("orderId", po.order().orderId());
+                    message.put("status", po.order().status());
+                    return message;
+                })
+                .collect(Collectors.toList());
 
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("totalOrders", allOrders.size());
-        response.put("orderIds", allOrders.keySet());
+        response.put("totalMessages", messages.size());
+        response.put("messages", messages);
         response.put("timestamp", Instant.now().toString());
 
-        logger.info("Debug: Found {} total orders in storage", allOrders.size());
+        logger.info("Debug: Found {} total messages in storage", messages.size());
 
         return ResponseEntity.ok(response);
     }

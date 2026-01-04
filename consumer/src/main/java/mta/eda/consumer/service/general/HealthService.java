@@ -43,11 +43,16 @@ public class HealthService {
 
     /**
      * Get the health status of the Kafka broker.
-     * Returns cached connectivity status from KafkaConnectivityService background monitoring.
+     * Pings Kafka for fresh status and returns cached connectivity status
+     * from KafkaConnectivityService background monitoring.
      *
      * @return HealthCheck with Kafka broker status
      */
     public HealthCheck getKafkaStatus() {
+        // Ping Kafka to get fresh status (updates cache if changed)
+        kafkaConnectivityService.pingKafka();
+
+        // Return current status (potentially just updated by ping)
         String detailedStatus = kafkaConnectivityService.getDetailedStatus();
 
         if (!kafkaConnectivityService.isKafkaConnected()) {

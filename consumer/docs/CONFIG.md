@@ -445,14 +445,25 @@ The `HealthService.getServiceStatus()` method checks if the Order Service is res
 - **Used By**: Both liveness and readiness probes
 
 ### Kafka Broker Health Check
-The `HealthService.getKafkaStatus()` method verifies Kafka broker connectivity.
+The `HealthService.getKafkaStatus()` method verifies Kafka broker connectivity through `KafkaConnectivityService`.
 
-- **Implementation**: Attempts to access `KafkaTemplate` configured with Kafka broker
-- **Response on Success**: `HealthCheck("UP", "Kafka broker is accessible")`
-- **Response on Failure**: `HealthCheck("DOWN", "Kafka broker is unavailable: ...")`
+- **Implementation**: 
+  - **Fresh Ping**: Calls `pingKafka()` on every health check for current status
+  - **No Retries**: Single attempt with 3-second timeout
+  - **Cache Update**: Updates cached state if Kafka status changed
+  - Returns the most current status (not stale cached data)
+- **Response States**:
+  - `HealthCheck("UP", "Connected and consuming from topics")` - Fully operational
+  - `HealthCheck("DEGRADED", "Connected to broker but topic 'orders' not ready")` - Temporary issue
+  - `HealthCheck("DOWN", "Cannot connect to Kafka broker at kafka:29092")` - Connection failed
 - **Bootstrap Server**: Retrieved from `spring.kafka.bootstrap-servers` (kafka:29092 in Docker)
 - **Used By**: Readiness probe only
-- **Impact**: If DOWN, readiness probe returns 503 Service Unavailable
+- **Impact**: 
+  - **Kafka UP or DEGRADED**: Readiness returns HTTP 200 OK (service ready)
+  - **Kafka DOWN**: Readiness returns **HTTP 503 Service Unavailable** (service NOT ready)
+- **Rationale**: Consumer cannot function without Kafka, so Kafka DOWN = service not ready
+- **Orchestration**: Kubernetes/Docker will stop routing traffic to unhealthy consumer instances
+- **Fresh Status Guarantee**: Ping mechanism ensures orchestrators always get current Kafka state
 
 ### Local State Store Health Check
 The `HealthService.getLocalStateStatus()` method verifies the in-memory order state store.

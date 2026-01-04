@@ -292,7 +292,7 @@ public class KafkaConnectivityService {
             // Check if this is a topic-not-found error
             if (isTopicNotFoundException(e)) {
                 topicNotFound.set(true);
-                lastError.set("TOPIC_NOT_FOUND: Topic '" + topicName + "' does not exist");
+                lastError.set("Topic '" + topicName + "' does not exist");
                 logger.warn("✗ Topic '{}' not found! Auto-creation may be disabled.", topicName);
             } else {
                 topicNotFound.set(false);
@@ -360,22 +360,22 @@ public class KafkaConnectivityService {
         boolean listenersRunning = areListenersRunning();
 
         if (!connected) {
-            return "DOWN - Cannot connect to Kafka broker at " + bootstrapServers;
+            return "Cannot connect to Kafka broker at " + bootstrapServers;
         }
 
         if (topicNotFound.get()) {
-            return "DOWN - Topic '" + topicName + "' does not exist (TOPIC_NOT_FOUND)";
+            return "Topic '" + topicName + "' does not exist";
         }
 
         if (!ready) {
-            return "DEGRADED - Connected to broker but topic '" + topicName + "' not ready";
+            return "Connected to broker but topic '" + topicName + "' not ready";
         }
 
         if (!listenersRunning) {
-            return "DEGRADED - Connected to broker but listeners not running";
+            return "Connected to broker but listeners not running";
         }
 
-        return "Connected and consuming from topics";
+        return "Kafka broker and topic '" + topicName +  "' are ready";
     }
 
     /**
@@ -397,6 +397,57 @@ public class KafkaConnectivityService {
      */
     public String getLastError() {
         return lastError.get();
+    }
+
+    /**
+     * Ping Kafka to get fresh status without retries.
+     * Called by health endpoints to ensure status is up-to-date.
+     * Updates cached state if status has changed.
+     *
+     * @return true if Kafka is healthy (connected and topic ready)
+     */
+    public boolean pingKafka() {
+        try {
+            // Quick connectivity check (no retries, just one attempt)
+            boolean isConnected = testKafkaConnection();
+            boolean wasConnected = kafkaConnected.get();
+
+            if (isConnected != wasConnected) {
+                // Status changed - update cache
+                kafkaConnected.set(isConnected);
+                if (isConnected) {
+                    logger.info("✓ Kafka ping: Broker reconnected at {}!", bootstrapServers);
+                } else {
+                    logger.warn("✗ Kafka ping: Broker disconnected from {}!", bootstrapServers);
+                    topicReady.set(false);
+                    return false;
+                }
+            }
+
+            if (!isConnected) {
+                return false;
+            }
+
+            // Check topic if connected
+            boolean topicExists = verifyTopicExists();
+            boolean wasReady = topicReady.get();
+
+            if (topicExists != wasReady) {
+                // Topic status changed - update cache
+                topicReady.set(topicExists);
+                if (topicExists) {
+                    logger.info("✓ Kafka ping: Topic '{}' is now ready!", topicName);
+                } else {
+                    logger.warn("✗ Kafka ping: Topic '{}' became unavailable!", topicName);
+                }
+            }
+
+            return isConnected && topicExists;
+
+        } catch (Exception e) {
+            logger.debug("Kafka ping failed: {}", e.getMessage());
+            return false;
+        }
     }
 
 }
