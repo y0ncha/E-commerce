@@ -25,8 +25,11 @@ import java.util.Map;
  * - VALIDATION_ERROR: Request validation failed
  * - MALFORMED_JSON: Invalid JSON in request body
  * - INVALID_ORDER_ID: Invalid order ID format
+ * - INVALID_STATUS: Invalid or unknown status value
+ * - INVALID_STATUS_TRANSITION: Status transition violates state machine rules
  * - ORDER_NOT_FOUND: Order not found in state store
  * - DUPLICATE_ORDER: Attempted to create a duplicate order
+ * - ORDER_STATUS_CONFLICT: Attempted to update order to status it already has
  * - KAFKA_SEND_FAILURE: Failed to send message to Kafka after retries
  * - TOPIC_NOT_FOUND: Required Kafka topic does not exist
  * - CIRCUIT_BREAKER_OPEN: Circuit breaker is open due to high failure rates
@@ -92,6 +95,73 @@ public class GlobalExceptionHandler {
         details.put("type", "DUPLICATE_ORDER");
         details.put("orderId", ex.getOrderId());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(errorBody(request, "Conflict", ex.getMessage(), details));
+    }
+
+    /**
+     * Handle Order Status Conflict (409 Conflict).
+     * Triggered when attempting to update an order to a status it already has.
+     * Example: Order is in "confirmed" status, trying to update it to "confirmed"
+     */
+    @ExceptionHandler(OrderStatusConflictException.class)
+    public ResponseEntity<Map<String, Object>> handleOrderStatusConflict(OrderStatusConflictException ex, HttpServletRequest request) {
+        logger.info("Status conflict for order {}: already in status '{}'", ex.getOrderId(), ex.getCurrentStatus());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("type", "ORDER_STATUS_CONFLICT");
+        details.put("orderId", ex.getOrderId());
+        details.put("currentStatus", ex.getCurrentStatus());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(errorBody(request, "Conflict", ex.getMessage(), details));
+    }
+
+    /**
+     * Handle Invalid Status Transition (400 Bad Request).
+     * Triggered when attempting to transition to an invalid state according to the state machine.
+     * Example: NEW → DISPATCHED (skipping CONFIRMED)
+     */
+    @ExceptionHandler(InvalidStatusTransitionException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidStatusTransition(InvalidStatusTransitionException ex, HttpServletRequest request) {
+        logger.warn("Invalid status transition for order {}: {} → {}",
+                ex.getOrderId(), ex.getCurrentStatus(), ex.getRequestedStatus());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("type", "INVALID_STATUS_TRANSITION");
+        details.put("orderId", ex.getOrderId());
+        details.put("currentStatus", ex.getCurrentStatus());
+        details.put("requestedStatus", ex.getRequestedStatus());
+        details.put("validTransitions", getValidTransitions(ex.getCurrentStatus()));
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(request, "Bad Request", ex.getMessage(), details));
+    }
+
+    /**
+     * Handle Invalid Status Value (400 Bad Request).
+     * Triggered when an unknown or invalid status value is provided.
+     * Example: "invalid_status", "pending", etc.
+     */
+    @ExceptionHandler(InvalidStatusException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidStatus(InvalidStatusException ex, HttpServletRequest request) {
+        logger.warn("Invalid status value: {}", ex.getInvalidStatus());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("type", "INVALID_STATUS");
+        if (ex.getOrderId() != null) {
+            details.put("orderId", ex.getOrderId());
+        }
+        details.put("invalidStatus", ex.getInvalidStatus());
+        details.put("validStatuses", new String[]{"new", "confirmed", "dispatched", "completed", "canceled"});
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(request, "Bad Request", ex.getMessage(), details));
+    }
+
+    /**
+     * Helper method to get valid transitions for a given status.
+     */
+    private String[] getValidTransitions(String currentStatus) {
+        if (currentStatus == null) {
+            return new String[]{"new", "confirmed", "dispatched", "completed", "canceled"};
+        }
+        return switch (currentStatus.toLowerCase()) {
+            case "new" -> new String[]{"confirmed", "canceled"};
+            case "confirmed" -> new String[]{"dispatched", "canceled"};
+            case "dispatched" -> new String[]{"completed", "canceled"};
+            case "completed", "canceled" -> new String[]{}; // Terminal states
+            default -> new String[]{"canceled"};
+        };
     }
 
     /**

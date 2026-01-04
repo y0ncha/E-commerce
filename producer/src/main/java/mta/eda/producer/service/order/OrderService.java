@@ -1,13 +1,12 @@
-package mta.eda.producer.service.order;
+ package mta.eda.producer.service.order;
 
-import mta.eda.producer.exception.DuplicateOrderException;
-import mta.eda.producer.exception.InvalidOrderIdException;
-import mta.eda.producer.exception.OrderNotFoundException;
+import mta.eda.producer.exception.*;
 import mta.eda.producer.model.request.CreateOrderRequest;
 import mta.eda.producer.model.request.UpdateOrderRequest;
 import mta.eda.producer.model.order.Order;
 import mta.eda.producer.model.order.OrderItem;
 import mta.eda.producer.service.kafka.KafkaProducerService;
+import mta.eda.producer.service.util.StatusMachine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -94,6 +93,20 @@ public class OrderService {
 
     /**
      * Updates an existing order and publishes updated full Order to Kafka.
+     *
+     * Status Transition Validation:
+     * Enforces the state machine rules to ensure only valid transitions occur:
+     * - NEW → CONFIRMED → DISPATCHED → COMPLETED (sequential progression)
+     * - CANCELED can be reached from any state (terminal)
+     * - Backward transitions are NOT allowed (e.g., DISPATCHED → CONFIRMED)
+     * - Skipping states is NOT allowed (e.g., NEW → DISPATCHED)
+     *
+     * @param request the update request containing orderId and new status
+     * @return the updated Order
+     * @throws OrderNotFoundException if order doesn't exist
+     * @throws OrderStatusConflictException if order already has the requested status
+     * @throws InvalidStatusException if the status value is invalid/unknown
+     * @throws InvalidStatusTransitionException if transition violates state machine
      */
     public Order updateOrder(UpdateOrderRequest request) {
         logger.info("Updating order with orderId={}, status={}", request.orderId(), request.status());
@@ -106,8 +119,24 @@ public class OrderService {
 
         // Idempotency guard: if status is unchanged, do nothing
         if (existingOrder.status().equals(request.status())) {
-            logger.info("No-op update: orderId={} already in status {}. Skipping send.", normalizedOrderId, existingOrder.status());
-            return existingOrder;
+            logger.warn("✗ Status conflict: orderId={} already in status '{}'", normalizedOrderId, existingOrder.status());
+            throw new OrderStatusConflictException(normalizedOrderId, existingOrder.status());
+        }
+
+        // Validate status value: Check if the requested status is valid
+        if (StatusMachine.getStatusOrder(request.status()) == -1) {
+            logger.error("✗ Invalid status value '{}' for order {}", request.status(), normalizedOrderId);
+            throw new InvalidStatusException(normalizedOrderId, request.status());
+        }
+
+        // State Machine Validation: Ensure status transition is valid
+        if (!StatusMachine.isValidTransition(existingOrder.status(), request.status())) {
+            String errorMsg = String.format(
+                "✗ Invalid status transition for order %s: %s → %s",
+                normalizedOrderId, existingOrder.status(), request.status()
+            );
+            logger.error(errorMsg);
+            throw new InvalidStatusTransitionException(normalizedOrderId, existingOrder.status(), request.status());
         }
 
         Order updatedOrder = new Order(
@@ -130,6 +159,9 @@ public class OrderService {
             // Success: Ensure it's removed from DLQ if it was there previously
             failedMessages.remove(normalizedOrderId);
             
+            logger.info("✓ Successfully updated order {}. Status: {} → {}",
+                    normalizedOrderId, existingOrder.status(), request.status());
+
             return updatedOrder;
             
         } catch (Exception e) {
@@ -139,7 +171,7 @@ public class OrderService {
             // 4. DATA SAFETY: Save failed update to internal DLQ
             failedMessages.put(normalizedOrderId, updatedOrder);
             
-            logger.error("Failed to update Kafka. Rolled back local store and saved to internal DLQ for orderId={}", normalizedOrderId);
+            logger.error("✗ Failed to update Kafka. Rolled back local store and saved to internal DLQ for orderId={}", normalizedOrderId);
             throw e;
         }
     }

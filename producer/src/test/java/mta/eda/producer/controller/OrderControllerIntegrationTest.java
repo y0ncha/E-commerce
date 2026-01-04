@@ -33,8 +33,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = {
-        "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
-        "KAFKA_BOOTSTRAP_SERVERS=${spring.embedded.kafka.brokers}"
+        "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}"
     }
 )
 @EmbeddedKafka(partitions = 1, topics = { "order-events" })
@@ -102,9 +101,9 @@ class OrderControllerIntegrationTest {
                 .andExpect(status().isCreated());
         waitForRecord("ORD-B200"); // Consume create message
 
-        // Update
-        UpdateOrderRequest updateRequest = new UpdateOrderRequest("B200", "shipped");
-        
+        // Update to confirmed (valid transition from new)
+        UpdateOrderRequest updateRequest = new UpdateOrderRequest("B200", "confirmed");
+
         mockMvc.perform(put("/cart-service/update-order")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateRequest)))
@@ -114,7 +113,7 @@ class OrderControllerIntegrationTest {
         ConsumerRecord<String, String> record = waitForRecord("ORD-B200");
         assertNotNull(record);
         assertEquals("ORD-B200", record.key());
-        assertTrue(record.value().contains("shipped"));
+        assertTrue(record.value().contains("confirmed"));
     }
 
     @Test
@@ -147,7 +146,7 @@ class OrderControllerIntegrationTest {
 
     @Test
     void testUpdateOrder_NotFound() throws Exception {
-        UpdateOrderRequest request = new UpdateOrderRequest("FFFF", "shipped");
+        UpdateOrderRequest request = new UpdateOrderRequest("FFFF", "confirmed");
 
         mockMvc.perform(put("/cart-service/update-order")
                 .contentType(MediaType.APPLICATION_JSON)

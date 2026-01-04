@@ -2,6 +2,7 @@ package mta.eda.consumer.service.order;
 
 import mta.eda.consumer.model.order.Order;
 import mta.eda.consumer.model.order.ProcessedOrder;
+import mta.eda.consumer.service.util.StatusMachine;
 import static mta.eda.consumer.service.util.OrderUtils.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,23 +29,21 @@ public class OrderService {
      * Processing Workflow:
      * 1. Receive & Deserialize (handled by KafkaConsumerService)
      * 2. Idempotency Check: Detect exact duplicates (same orderId + same status)
-     * 3. State Transition Validation: Prevent older status from overwriting newer state
+     * 3. State Transition Validation: Prevent invalid status transitions using state machine
      * 4. Business Logic: Calculate shipping cost based on order items
      * 5. Update Local State: Save order and shipping cost
      * 6. Acknowledge: Called by KafkaConsumerService after successful processing
      *
+     * State Machine Validation:
+     * - NEW → CONFIRMED → DISPATCHED → COMPLETED (forward progression)
+     * - CANCELED can be reached from any state (terminal)
+     * - Backward transitions (e.g., DISPATCHED → NEW) are rejected
+     * - All transitions must follow the defined state machine
+     *
      * Idempotency Strategy:
      * - Exact Duplicate: If the incoming order has the same orderId AND same status as current state, skip it
-     * - Out-of-Order Event: If the incoming status represents an older state than current, skip it
-     * - Valid Transition: If the incoming status is newer or first-time, process it
-     *
-     * Status Progression (from oldest to newest):
-     * NEW < CONFIRMED < DISPATCHED < COMPLETED
-     *
-     * Examples:
-     * - Current: DISPATCHED, Incoming: NEW → Skip (older state)
-     * - Current: CONFIRMED, Incoming: DISPATCHED → Process (valid transition)
-     * - Current: CONFIRMED, Incoming: CONFIRMED → Skip (duplicate)
+     * - Invalid Transition: If the transition violates state machine rules, skip it
+     * - Valid Transition: If the incoming status transition is allowed, process it
      */
     public void processOrder(Order order) {
         String orderId = order.orderId();
@@ -58,11 +57,12 @@ public class OrderService {
             return;
         }
 
-        // Step 2: State transition validation - prevent older status from corrupting newer state
-        // Compare status progression: only allow updates if new status >= current status
-        if (current != null && !isValidStatusTransition(current.order().status(), order.status())) {
-            logger.warn("⊘ Out-of-Order Event: Order {} is already in '{}', rejecting older status '{}'. Skipping.",
-                    orderId, current.order().status(), order.status());
+        // Step 2: State transition validation using shared StatusMachine
+        // Check if the status transition is allowed by the state machine
+        String currentStatus = current == null ? null : current.order().status();
+        if (!StatusMachine.isValidTransition(currentStatus, order.status())) {
+            logger.warn("⊘ Invalid Status Transition: Order {} cannot transition from '{}' to '{}'. Skipping.",
+                    orderId, currentStatus, order.status());
             return;
         }
 
@@ -85,50 +85,6 @@ public class OrderService {
                 String.format("%.2f", shippingCost));
     }
 
-    /**
-     * Validates if a status transition is valid based on status progression order.
-     *
-     * Status Order (from lowest to highest):
-     * NEW (0) < CONFIRMED (1) < DISPATCHED (2) < COMPLETED (3)
-     *
-     * A transition is valid if: newStatus.order >= currentStatus.order
-     * This prevents out-of-order messages from corrupting the state.
-     *
-     * @param currentStatus the current status in the store
-     * @param newStatus the incoming status from Kafka message
-     * @return true if the transition is valid (new >= current), false otherwise
-     */
-    private boolean isValidStatusTransition(String currentStatus, String newStatus) {
-        int currentOrder = getStatusOrder(currentStatus);
-        int newOrder = getStatusOrder(newStatus);
-
-        // Valid if new status order >= current status order
-        return newOrder >= currentOrder;
-    }
-
-    /**
-     * Returns the order/priority of a status in the progression.
-     * Lower number = earlier stage, Higher number = later stage.
-     *
-     * @param status the order status
-     * @return the order number (0-3), or -1 for unknown status
-     */
-    private int getStatusOrder(String status) {
-        if (status == null) {
-            return -1;
-        }
-
-        return switch (status.toUpperCase()) {
-            case "NEW" -> 0;
-            case "CONFIRMED" -> 1;
-            case "DISPATCHED" -> 2;
-            case "COMPLETED" -> 3;
-            default -> {
-                logger.warn("Unknown status encountered: {}. Treating as lowest priority.", status);
-                yield -1; // Unknown statuses are treated as lowest priority
-            }
-        };
-    }
 
     /**
      * Get an order by its ID.

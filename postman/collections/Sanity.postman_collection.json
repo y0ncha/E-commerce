@@ -471,7 +471,7 @@
       "response": []
     },
     {
-      "name": "Update Order Status (Producer)",
+      "name": "Update Order Status (confirmed)",
       "event": [
         {
           "listen": "test",
@@ -509,7 +509,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"status\": \"dispatched\"\n}"
+          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"status\": \"confirmed\"\n}"
         },
         "url": {
           "raw": "{{base_url_producer}}/update-order",
@@ -538,7 +538,7 @@
               "",
               "pm.test(\"Consumer reflected dispatched status when found\", () => {",
               "    const jsonData = pm.response.json();",
-              "    pm.expect(jsonData.status).to.eql(\"dispatched\");",
+              "    pm.expect(jsonData.status).to.eql(\"confirmed\");",
               "});"
             ],
             "type": "text/javascript",
@@ -677,6 +677,59 @@
           ]
         },
         "description": "Get all order IDs from Kafka topic (GET with query parameter)"
+      },
+      "response": []
+    },
+    {
+      "name": "Update Order Status (canceled)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "3a75ac29-a57c-493b-a8bb-2e79eca56762",
+            "exec": [
+              "pm.test(\"Update accepted by Producer\", () => pm.response.to.have.status(200));"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "86b496ad-346a-4fde-98b7-84cd06c05f39",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "52a0c48f-5cdf-48c8-b721-20fb5fd77273",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"status\": \"canceled\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url_producer}}/update-order",
+          "host": [
+            "{{base_url_producer}}"
+          ],
+          "path": [
+            "update-order"
+          ]
+        }
       },
       "response": []
     },

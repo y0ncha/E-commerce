@@ -415,6 +415,87 @@ The service maintains three atomic flags:
 
 ---
 
+## Status Machine (State Validation)
+
+### Overview
+The producer enforces a **state machine** to validate order status transitions before sending messages to Kafka, preventing invalid orders from being published.
+
+**Implementation Location**: `producer/src/main/java/mta/eda/producer/service/util/StatusMachine.java`
+
+### Allowed Status Progression
+
+```
+NEW (0) → CONFIRMED (1) → DISPATCHED (2) → COMPLETED (3)
+                        ↓
+                    CANCELED (4) [terminal - reachable from any state]
+```
+
+### Validation Rules
+
+#### ✅ **Valid Transitions**
+
+1. **Forward Progression**
+   - NEW → CONFIRMED (0 → 1) ✅
+   - CONFIRMED → DISPATCHED (1 → 2) ✅
+   - DISPATCHED → COMPLETED (2 → 3) ✅
+
+2. **Cancellation (Terminal State)**
+   - NEW → CANCELED ✅
+   - CONFIRMED → CANCELED ✅
+   - DISPATCHED → CANCELED ✅
+   - COMPLETED → CANCELED ✅ (even completed can be canceled)
+
+#### ❌ **Invalid Transitions**
+
+1. **Backward Progression**
+   - COMPLETED → DISPATCHED ❌
+   - DISPATCHED → CONFIRMED ❌
+   - CONFIRMED → NEW ❌
+
+2. **Unknown Statuses**
+   - Any unrecognized status ❌
+
+### Exception Handling
+
+On invalid transition, `updateOrder()` throws `InvalidStatusTransitionException`:
+
+```java
+if (!StatusMachine.isValidTransition(existingOrder.status(), request.status())) {
+    throw new InvalidStatusTransitionException(orderId, currentStatus, newStatus);
+}
+```
+
+**Client Response (400 Bad Request):**
+```
+Invalid status transition for order ORD-123: DISPATCHED → NEW. 
+Status can only move forward or to CANCELED.
+```
+
+### Shared Validation with Consumer
+
+**Critical:** Producer and consumer use identical StatusMachine logic:
+
+- **Producer**: Validates BEFORE publishing (prevents invalid messages)
+- **Consumer**: Validates on receipt (defense-in-depth fallback)
+
+**Result:** Guaranteed consistency across entire system
+
+### Only Valid Orders Published
+
+```
+Kafka Topic: orders
+├─ ORD-123, status=NEW (initial)
+├─ ORD-123, status=CONFIRMED (valid transition: 0→1)
+├─ ORD-123, status=DISPATCHED (valid transition: 1→2)
+├─ ORD-456, status=NEW (different order)
+├─ ORD-456, status=CONFIRMED (valid transition: 0→1)
+└─ ORD-123, status=CANCELED (valid from any state)
+
+❌ Invalid transitions NEVER reach Kafka
+```
+
+---
+
 ## Message Flow
 
 ### Key Assignment
