@@ -42,16 +42,19 @@ Configuration values follow the precedence: **Command-line → Environment Varia
 #### `spring.kafka.bootstrap-servers=${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}`
 - **Purpose**: Address(es) of Kafka brokers
 - **Default**: `localhost:9092` (for local development)
-- **Docker Override**: `KAFKA_BOOTSTRAP_SERVERS=kafka:29092` (set in docker-compose.yml)
+- **Docker Override**: `SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092` (set in docker-compose.yml)
+  - **Note**: Docker uses Spring Boot's naming convention (`SPRING_KAFKA_*`)
+  - Application.properties uses simplified variable name (`KAFKA_BOOTSTRAP_SERVERS`)
+  - Both work: Spring Boot handles the property name transformation automatically
 - **Why This Value**: 
   - Docker: Uses hostname resolution (internal container name `kafka`)
   - Port 29092 is the internal protocol port (not exposed externally)
   - Configured by producer's docker-compose
   - Local Dev: Defaults to `localhost:9092` for development without Docker
 - **Override Examples**:
-  - Docker: `KAFKA_BOOTSTRAP_SERVERS=kafka:29092` (set in docker-compose.yml)
-  - Local Dev: Use default `localhost:9092`
-  - Remote: `KAFKA_BOOTSTRAP_SERVERS=kafka-broker-1.example.com:9092,kafka-broker-2.example.com:9092`
+  - Docker (Spring convention): `SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092`
+  - Local (simplified): `KAFKA_BOOTSTRAP_SERVERS=localhost:9092`
+  - Remote: `SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka-broker-1.example.com:9092,kafka-broker-2.example.com:9092`
 
 ### Consumer Group Configuration
 
@@ -796,11 +799,20 @@ NEW (0) → CONFIRMED (1) → DISPATCHED (2) → COMPLETED (3)
 
 #### ✅ **Valid Transitions**
 
-1. **Strictly Sequential Forward Progression**
+**Special Case: First Order Creation (No Previous State)**
+   - When an order is created for the first time (currentStatus = null), it can start in **any valid status**:
+   - null → NEW ✅ (typical case)
+   - null → CONFIRMED ✅ (producer creates already-confirmed order)
+   - null → DISPATCHED ✅ (producer creates already-dispatched order)
+   - null → COMPLETED ✅ (producer creates already-completed order)
+   - null → CANCELED ✅ (producer creates already-canceled order)
+   - **Rationale**: Allows flexibility for different order creation flows in the producer
+
+1. **Strictly Sequential Forward Progression (After Initial Creation)**
    - NEW → CONFIRMED (0 → 1) ✅
    - CONFIRMED → DISPATCHED (1 → 2) ✅
    - DISPATCHED → COMPLETED (2 → 3) ✅
-   - **Note**: You **MUST** progress one step at a time. Skipping states is NOT allowed.
+   - **Note**: After initial creation, you **MUST** progress one step at a time. Skipping states is NOT allowed.
    - **Example**: NEW → DISPATCHED is **INVALID** ❌ (must go NEW → CONFIRMED → DISPATCHED)
    - **Example**: CONFIRMED → COMPLETED is **INVALID** ❌ (must go CONFIRMED → DISPATCHED → COMPLETED)
 
@@ -808,8 +820,9 @@ NEW (0) → CONFIRMED (1) → DISPATCHED (2) → COMPLETED (3)
    - NEW → CANCELED ✅
    - CONFIRMED → CANCELED ✅
    - DISPATCHED → CANCELED ✅
-   - **Note**: CANCELED is a terminal state reachable from any non-terminal state
-   - **Exception**: COMPLETED → CANCELED is **NOT allowed** (COMPLETED is also terminal)
+   - COMPLETED → CANCELED ✅
+   - **Note**: CANCELED can be reached from **any state**, including COMPLETED (edge case for order corrections)
+   - **Terminal State**: Once CANCELED, no further transitions allowed
 
 #### ❌ **Invalid Transitions**
 

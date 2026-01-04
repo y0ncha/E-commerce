@@ -288,22 +288,22 @@ stateDiagram-v2
 
 | Current Status | Allowed Next Status | Rejected Transitions |
 |----------------|---------------------|---------------------|
-| `null` (new)   | NEW, CONFIRMED, DISPATCHED, COMPLETED, CANCELED | None (any valid status allowed) |
-| **NEW**        | **CONFIRMED only** | DISPATCHED, COMPLETED (must progress sequentially) |
-| **CONFIRMED**  | **DISPATCHED only** | NEW (backward), COMPLETED (must progress sequentially) |
-| **DISPATCHED** | **COMPLETED only** | NEW, CONFIRMED (backward) |
-| **COMPLETED**  | None (terminal) | All (order complete, cannot transition) |
+| `null` (new)   | **ANY VALID STATUS** (NEW, CONFIRMED, DISPATCHED, COMPLETED, CANCELED) | None - first creation is flexible |
+| **NEW**        | **CONFIRMED only** (or CANCELED) | DISPATCHED, COMPLETED (must progress sequentially) |
+| **CONFIRMED**  | **DISPATCHED only** (or CANCELED) | NEW (backward), COMPLETED (must progress sequentially) |
+| **DISPATCHED** | **COMPLETED only** (or CANCELED) | NEW, CONFIRMED (backward) |
+| **COMPLETED**  | **CANCELED only** | All except CANCELED |
 | **CANCELED**   | None (terminal) | All (order canceled, cannot transition) |
 
-**Important: Strictly Sequential Transitions**
-- The state machine enforces **strictly sequential** transitions (one step at a time)
-- You **cannot skip states**: Must follow NEW → CONFIRMED → DISPATCHED → COMPLETED
-- Examples of **INVALID** transitions:
+**Important: Strictly Sequential Transitions (After Initial Creation)**
+- First order creation (null → X): Can start in **any valid status** (flexible for producer)
+- After initial creation: **Must** follow NEW → CONFIRMED → DISPATCHED → COMPLETED (one step at a time)
+- Examples of **INVALID** transitions after initial creation:
   - NEW → DISPATCHED ❌ (must go NEW → CONFIRMED → DISPATCHED)
   - NEW → COMPLETED ❌ (must progress through all intermediate states)
   - CONFIRMED → COMPLETED ❌ (must go CONFIRMED → DISPATCHED → COMPLETED)
-- Only exception: **CANCELED** can be reached from any non-terminal state (NEW, CONFIRMED, or DISPATCHED)
-- Terminal states (COMPLETED, CANCELED) cannot transition to any other state
+- Only exception: **CANCELED** can be reached from **any state** (including COMPLETED)
+- Terminal states: CANCELED cannot transition to any other state
 
 #### Implementation
 
@@ -334,10 +334,11 @@ private boolean isValidTransition(String currentStatus, String newStatus) {
 ```
 
 **Key Implementation Details:**
+- First-time creation (currentStatus = null): Any valid status is allowed
 - Uses `getStatusOrder()` to map statuses to numeric values (NEW=0, CONFIRMED=1, DISPATCHED=2, COMPLETED=3, CANCELED=4)
-- Enforces **strictly sequential** progression: `newOrder == currentOrder + 1`
-- Only exception: CANCELED can be reached from any non-terminal state
-- Terminal states (COMPLETED, CANCELED) cannot transition to any other state
+- Enforces **strictly sequential** progression after initial creation: `newOrder == currentOrder + 1`
+- Exception: CANCELED can be reached from **any state** (including COMPLETED)
+- Terminal state: CANCELED cannot transition to any other state
 
 #### Sequencing Validation Flow
 
