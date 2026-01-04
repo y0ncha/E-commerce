@@ -87,13 +87,20 @@ These errors occur when messages arrive from Kafka but fail to be converted into
 
 These mechanisms prevent duplicate processing and enforce valid state transitions, ensuring the consumer acts as a reliable mirror of the producer's state.
 
-### Idempotency Implementation: Offset-Based Duplicate Detection
+### Idempotency Implementation: Dual-Layer Duplicate Detection
 
 **Challenge**: Kafka's At-Least-Once delivery means the same message can be delivered multiple times (e.g., after consumer restart, network partition, rebalancing).
 
-**Solution**: Track processed message offsets per orderId to detect and skip duplicates.
+**Solution**: The consumer implements **two complementary layers** of idempotency checking:
 
-#### Implementation Details
+1. **Layer 1: Offset-Based Detection (KafkaConsumerService)** - Detects exact message redeliveries
+2. **Layer 2: State-Based Detection (OrderService)** - Detects duplicate status updates
+
+#### Layer 1: Offset-Based Idempotency (KafkaConsumerService)
+
+This layer detects when Kafka redelivers the **exact same message** (same offset) after a failure or restart.
+
+**Implementation:**
 
 ```java
 // In KafkaConsumerService
@@ -114,6 +121,54 @@ private void recordProcessedMessage(String orderId, long offset) {
 
 private record ProcessedMessageInfo(long offset, long processedAt) {}
 ```
+
+**When It Triggers:**
+- Message at offset 42 is processed and acknowledged
+- Consumer crashes before offset is fully committed
+- Kafka redelivers the same message (offset 42) on restart
+- Idempotency check detects `offset 42 <= 42` and skips processing
+
+#### Layer 2: State-Based Idempotency (OrderService)
+
+This layer detects when an order already has the **same status** in the state store (duplicate event, not necessarily same message).
+
+**Implementation:**
+
+```java
+// In OrderService
+public void processOrder(Order order) {
+    String orderId = order.orderId();
+    ProcessedOrder current = processedOrderStore.get(orderId);
+
+    // Idempotency check - if we already have this exact order state, skip
+    // This handles duplicate events (same orderId + same status = same event)
+    if (current != null && current.order().status().equals(order.status())) {
+        logger.info("⊘ Idempotency Check: Order {} already in state '{}'. Skipping duplicate.",
+                orderId, order.status());
+        return;
+    }
+    
+    // Continue with state transition validation and processing...
+}
+```
+
+**When It Triggers:**
+- Order ORD-001 is already in state "CONFIRMED"
+- A new message arrives with orderId=ORD-001, status="CONFIRMED"
+- State-based check detects duplicate status and skips processing
+- This works even if the messages have different offsets (e.g., producer sent duplicate)
+
+#### Why Two Layers?
+
+| Layer | Detects | Example Scenario | Protection |
+|-------|---------|------------------|------------|
+| **Offset-Based** | Exact message redelivery | Consumer crashes mid-processing, Kafka redelivers same offset | Prevents reprocessing after failure/restart |
+| **State-Based** | Duplicate status events | Producer accidentally sends duplicate, or late-arriving message | Prevents state corruption from logical duplicates |
+
+**Combined Protection:**
+- Offset-based catches Kafka-level redeliveries (infrastructure failure)
+- State-based catches application-level duplicates (business logic)
+- Together, they ensure **exactly-once semantics** at the business logic level, even with at-least-once delivery
 
 #### Idempotency Flow Diagram
 
@@ -194,38 +249,61 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> CREATED: New order
-    CREATED --> CONFIRMED: Payment processed
-    CREATED --> DISPATCHED: Fast-track shipping
-    CREATED --> DELIVERED: Same-day delivery
-    
+    [*] --> NEW: New order
+    NEW --> CONFIRMED: Payment processed
     CONFIRMED --> DISPATCHED: Warehouse ships
-    CONFIRMED --> DELIVERED: Pick-up delivery
+    DISPATCHED --> COMPLETED: Delivery complete
     
-    DISPATCHED --> DELIVERED: Delivery complete
+    NEW --> CANCELED: Cancel before confirmation
+    CONFIRMED --> CANCELED: Cancel after confirmation
+    DISPATCHED --> CANCELED: Cancel after dispatch
     
-    DELIVERED --> [*]: Final state
+    COMPLETED --> [*]: Final state
+    CANCELED --> [*]: Final state (terminal)
     
-    note right of CREATED
+    note right of NEW
         Entry point
-        All statuses can reach here
+        Must progress sequentially
     end note
     
-    note right of DELIVERED
+    note right of COMPLETED
         Terminal state
         No transitions allowed
     end note
+    
+    note right of CANCELED
+        Terminal state
+        Reachable from any non-terminal state
+        No transitions allowed after CANCELED
+    end note
 ```
+
+**Key State Machine Rules:**
+- **Strictly Sequential**: Must progress NEW → CONFIRMED → DISPATCHED → COMPLETED (one step at a time)
+- **No Skipping**: Cannot skip states (e.g., NEW → DISPATCHED is invalid)
+- **CANCELED Exception**: Can transition to CANCELED from any non-terminal state (NEW, CONFIRMED, DISPATCHED)
+- **Terminal States**: COMPLETED and CANCELED are terminal; no further transitions allowed
 
 #### Valid Transitions Table
 
-| Current Status | Allowed Next Statuses | Rejected Transitions |
-|----------------|----------------------|---------------------|
-| `null` (new)   | CREATED, CONFIRMED, DISPATCHED, DELIVERED | None (all allowed) |
-| **CREATED**    | CONFIRMED, DISPATCHED, DELIVERED | None |
-| **CONFIRMED**  | DISPATCHED, DELIVERED | CREATED (backward) |
-| **DISPATCHED** | DELIVERED | CREATED, CONFIRMED (backward) |
-| **DELIVERED**  | None (terminal) | All (order complete) |
+| Current Status | Allowed Next Status | Rejected Transitions |
+|----------------|---------------------|---------------------|
+| `null` (new)   | **ANY VALID STATUS** (NEW, CONFIRMED, DISPATCHED, COMPLETED, CANCELED) | None - first creation is flexible |
+| **NEW**        | **CONFIRMED only** (or CANCELED) | DISPATCHED, COMPLETED (must progress sequentially) |
+| **CONFIRMED**  | **DISPATCHED only** (or CANCELED) | NEW (backward), COMPLETED (must progress sequentially) |
+| **DISPATCHED** | **COMPLETED only** (or CANCELED) | NEW, CONFIRMED (backward) |
+| **COMPLETED**  | **CANCELED only** | All except CANCELED |
+| **CANCELED**   | None (terminal) | All (order canceled, cannot transition) |
+
+**Important: Strictly Sequential Transitions (After Initial Creation)**
+- First order creation (null → X): Can start in **any valid status** (flexible for producer)
+- After initial creation: **Must** follow NEW → CONFIRMED → DISPATCHED → COMPLETED (one step at a time)
+- Examples of **INVALID** transitions after initial creation:
+  - NEW → DISPATCHED ❌ (must go NEW → CONFIRMED → DISPATCHED)
+  - NEW → COMPLETED ❌ (must progress through all intermediate states)
+  - CONFIRMED → COMPLETED ❌ (must go CONFIRMED → DISPATCHED → COMPLETED)
+- Only exception: **CANCELED** can be reached from **any state** (including COMPLETED)
+- Terminal states: CANCELED cannot transition to any other state
 
 #### Implementation
 
@@ -234,18 +312,33 @@ private boolean isValidTransition(String currentStatus, String newStatus) {
     if (currentStatus.equals(newStatus)) {
         return true;  // Same status (duplicate or no-op)
     }
-    return switch (currentStatus) {
-        case "CREATED" -> newStatus.equals("CONFIRMED") || 
-                          newStatus.equals("DISPATCHED") || 
-                          newStatus.equals("DELIVERED");
-        case "CONFIRMED" -> newStatus.equals("DISPATCHED") || 
-                            newStatus.equals("DELIVERED");
-        case "DISPATCHED" -> newStatus.equals("DELIVERED");
-        case "DELIVERED" -> false;  // Terminal state
-        default -> true;  // Unknown statuses: allow (defensive posture)
-    };
+    
+    // Get status progression order
+    int currentOrder = getStatusOrder(currentStatus);  // NEW=0, CONFIRMED=1, DISPATCHED=2, COMPLETED=3, CANCELED=4
+    int newOrder = getStatusOrder(newStatus);
+    
+    // CANCELED is terminal - can be reached from any non-terminal state
+    if (newStatus.equalsIgnoreCase("CANCELED") || newStatus.equalsIgnoreCase("CANCELLED")) {
+        return true;  // Allow transition to CANCELED from any state
+    }
+    
+    // All other transitions must be STRICTLY SEQUENTIAL (one step at a time)
+    // Only allow newOrder = currentOrder + 1
+    // Examples:
+    //   NEW (0) → CONFIRMED (1): valid (1 == 0+1) ✅
+    //   CONFIRMED (1) → DISPATCHED (2): valid (2 == 1+1) ✅
+    //   NEW (0) → DISPATCHED (2): invalid (2 != 0+1) ❌
+    //   CONFIRMED (1) → COMPLETED (3): invalid (3 != 1+1) ❌
+    return newOrder == currentOrder + 1;
 }
 ```
+
+**Key Implementation Details:**
+- First-time creation (currentStatus = null): Any valid status is allowed
+- Uses `getStatusOrder()` to map statuses to numeric values (NEW=0, CONFIRMED=1, DISPATCHED=2, COMPLETED=3, CANCELED=4)
+- Enforces **strictly sequential** progression after initial creation: `newOrder == currentOrder + 1`
+- Exception: CANCELED can be reached from **any state** (including COMPLETED)
+- Terminal state: CANCELED cannot transition to any other state
 
 #### Sequencing Validation Flow
 
@@ -324,29 +417,48 @@ WARN [OrderService]: Invalid transition: Order ORD-001 cannot move from DISPATCH
 
 ### Retry Strategy with CommonErrorHandler
 
-The Consumer uses Spring Kafka's `CommonErrorHandler` with exponential backoff:
+The Consumer uses Spring Kafka's `DefaultErrorHandler` with exponential backoff configured in `KafkaConsumerConfig.java`:
 
 ```java
 @Bean
-public CommonErrorHandler errorHandler() {
+public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
+        ConsumerFactory<String, String> consumerFactory,
+        KafkaTemplate<String, String> kafkaTemplate) {
+    
+    ConcurrentKafkaListenerContainerFactory<String, String> factory =
+            new ConcurrentKafkaListenerContainerFactory<>();
+    factory.setConsumerFactory(consumerFactory);
+    factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+    
+    // Configure native error handling with exponential backoff and DLT
+    // Retry Pattern (optimized for fast recovery):
+    // - Initial interval: 1 second
+    // - Multiplier: 2.0 (exponential)
+    // - Max interval: 10 seconds
+    // - Max attempts: 3 retries
+    // Retry sequence: 1s, 2s, 4s (total ~7 seconds before DLT)
+    ExponentialBackOff backOff = new ExponentialBackOff(1000, 2.0);
+    backOff.setMaxInterval(10000);  // Cap at 10 seconds
+    
     DefaultErrorHandler errorHandler = new DefaultErrorHandler(
-        new FixedBackOff(1000L, 3L)  // 1 second interval, 3 retries
+            new DeadLetterPublishingRecoverer(kafkaTemplate),  // Send to DLT on final failure
+            backOff
     );
     
-    errorHandler.addNotRetryableExceptions(  // Immediately send to DLT
-        JsonProcessingException.class,        // Malformed JSON
-        DeserializationException.class        // Deserialization error
-    );
+    factory.setCommonErrorHandler(errorHandler);
+    factory.setAutoStartup(true);  // Enable auto-startup for immediate consumption
     
-    return errorHandler;
+    return factory;
 }
 ```
 
 **Retry Configuration:**
-- **Initial Delay**: 1 second
+- **Initial Delay**: 1 second (fast first retry)
+- **Multiplier**: 2.0 (exponential backoff)
+- **Max Interval**: 10 seconds (cap to prevent long waits)
 - **Max Attempts**: 3 retries (4 total attempts including original)
-- **Backoff**: Fixed (can be changed to exponential)
-- **Non-Retryable Exceptions**: Deserialization errors (poison pills)
+- **Retry Sequence**: 1s → 2s → 4s (total ~7 seconds before DLT)
+- **Benefits**: Fast recovery from transient failures while preventing infinite retry loops
 
 ### Retry and DLT Flow Diagram
 
@@ -457,7 +569,62 @@ sequenceDiagram
 
 ### Kafka Connectivity Monitoring
 
-The Consumer implements `KafkaConnectivityService` for broker monitoring:
+The Consumer implements `KafkaConnectivityService` for broker monitoring with Resilience4j exponential backoff:
+
+#### Connectivity Monitoring Configuration
+
+```java
+// Configure Resilience4j Retry with exponential backoff
+// Optimized for faster initial recovery: start at 100ms and cap at 5s
+// Retry sequence: 100ms, 200ms, 400ms, 800ms, 1.6s, 3.2s, 5s, 5s... (capped at 5s)
+RetryConfig retryConfig = RetryConfig.custom()
+        .maxAttempts(Integer.MAX_VALUE)                          // Infinite retries
+        .intervalFunction(
+                io.github.resilience4j.core.IntervalFunction.ofExponentialBackoff(
+                        100,    // Initial interval: 100ms for aggressive first retries
+                        2.0,    // Multiplier: 2x exponential
+                        5000    // Max interval: 5 seconds to keep reconnects responsive
+                )
+        )
+        .retryOnException(e -> true)                             // Retry on any exception
+        .failAfterMaxAttempts(false)                             // Never give up
+        .build();
+```
+
+**Monitoring Configuration:**
+- **Initial Retry**: 100ms (aggressive first attempt)
+- **Multiplier**: 2.0x (exponential growth)
+- **Max Interval**: 5 seconds (cap to keep reconnects responsive)
+- **Retry Sequence**: 100ms → 200ms → 400ms → 800ms → 1.6s → 3.2s → 5s → 5s... (capped)
+- **Max Attempts**: Infinite (never gives up trying to reconnect)
+- **Behavior**: Retries on any exception, never fails permanently
+
+#### Adaptive Scheduling
+
+After each connectivity check, the service schedules the next check based on current state:
+
+```java
+// Adaptive scheduling: probe faster until healthy
+boolean connected = kafkaConnected.get();
+boolean ready = topicReady.get();
+boolean listenersRunning = areListenersRunning();
+
+long nextCheckDelay;
+if (!connected) {
+    nextCheckDelay = 1000;       // disconnected: retry quickly (1s)
+} else if (!ready) {
+    nextCheckDelay = 1000;       // connected but topic not ready: retry quickly (1s)
+} else if (!listenersRunning) {
+    nextCheckDelay = 1000;       // connected and topic ready but listeners down: retry quickly (1s)
+} else {
+    nextCheckDelay = 30000;      // healthy: back off to 30s
+}
+```
+
+**Adaptive Behavior:**
+- **Unhealthy State**: Check every 1 second (fast recovery detection)
+- **Healthy State**: Check every 30 seconds (reduce load, background monitoring)
+- **Auto-Recovery**: Automatically detects when Kafka comes back online
 
 #### Connectivity Monitoring Flow
 
@@ -606,14 +773,44 @@ The consumer implements a **HealthService** to monitor service health and depend
 - Checks if the service method is callable
 - On exception: Returns `HealthCheck("DOWN", "Service error: ...")`
 
-#### **Kafka Broker Health Check** (`getKafkaStatus()`)
-- Retrieves cached Kafka connectivity status from `KafkaConnectivityService`
-- Returns one of three states:
-  - `HealthCheck("UP", "Connected and consuming from topics")` - Fully operational
-  - `HealthCheck("DEGRADED", "Connected to broker but topic 'orders' not ready")` - Temporary issue
-  - `HealthCheck("DOWN", "Cannot connect to Kafka broker at kafka:29092")` - Connection failed
-- Background monitoring continuously checks Kafka with exponential backoff
-- Critical for readiness probe - determines if consumer can process messages
+    /**
+     * Get the health status of the Kafka broker.
+     * Pings Kafka for fresh status (3-second timeout, no retries) and returns current state.
+     * This ensures health checks always reflect the most current Kafka connectivity status.
+     *
+     * Implementation:
+     * - Calls kafkaConnectivityService.pingKafka() on every health check
+     * - pingKafka() performs a single connection attempt with 3-second timeout
+     * - Updates cached connectivity state if status has changed
+     * - Returns detailed status based on current state
+     *
+     * @return HealthCheck with Kafka broker status
+     */
+    public HealthCheck getKafkaStatus() {
+        // Ping Kafka to get fresh status (updates cache if changed)
+        kafkaConnectivityService.pingKafka();
+
+        // Return current status (potentially just updated by ping)
+        String detailedStatus = kafkaConnectivityService.getDetailedStatus();
+
+        if (!kafkaConnectivityService.isKafkaConnected()) {
+            return new HealthCheck("DOWN", detailedStatus);
+        }
+
+        if (kafkaConnectivityService.isTopicNotFound()) {
+            return new HealthCheck("DOWN", detailedStatus);
+        }
+
+        if (!kafkaConnectivityService.isTopicReady()) {
+            return new HealthCheck("DEGRADED", detailedStatus);
+        }
+
+        if (kafkaConnectivityService.isKafkaConnected() && kafkaConnectivityService.areListenersRunning()) {
+            return new HealthCheck("UP", detailedStatus);
+        } else {
+            return new HealthCheck("DEGRADED", detailedStatus);
+        }
+    }
 
 #### **Local State Store Health Check** (`getLocalStateStatus()`)
 - Verifies in-memory `processedOrderStore` is accessible
