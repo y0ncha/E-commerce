@@ -379,7 +379,7 @@ The `/health/ready` endpoint will return:
     },
     "kafka": {
       "status": "DOWN",
-      "details": "Topic 'orders' does not exist (TOPIC_NOT_FOUND)"
+      "details": "Topic 'orders' does not exist"
     }
   }
 }

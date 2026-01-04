@@ -277,7 +277,7 @@ public class KafkaConnectivityService {
             // Check if this is a topic-not-found error
             if (isTopicNotFoundException(e)) {
                 topicNotFound.set(true);
-                lastError.set("TOPIC_NOT_FOUND: Topic '" + topicName + "' does not exist");
+                lastError.set("Topic '" + topicName + "' does not exist");
                 logger.warn("✗ Topic '{}' not found! Auto-creation may be disabled.", topicName);
             } else {
                 topicNotFound.set(false);
@@ -379,7 +379,7 @@ public class KafkaConnectivityService {
             return "Cannot connect to Kafka broker at " + bootstrapServers;
         }
         if (topicNotFound.get()) {
-            return "Topic '" + topicName + "' does not exist (TOPIC_NOT_FOUND)";
+            return "Topic '" + topicName + "' does not exist";
         }
         if (!topicReady.get()) {
             return "Connected to broker but topic '" + topicName + "' not ready";
