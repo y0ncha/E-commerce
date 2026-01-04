@@ -448,13 +448,14 @@ logging.level.root → LOGGING_LEVEL_ROOT
 ### docker-compose.yml Environment Section
 ```yaml
 environment:
-  SPRING_KAFKA_BOOTSTRAP_SERVERS: general:29092
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
   SPRING_KAFKA_CONSUMER_GROUP_ID: order-service-group
-  KAFKA_TOPIC: ${KAFKA_TOPIC:-orders}
-  SERVER_PORT: 8081
+  KAFKA_TOPIC: orders
   LOGGING_LEVEL_ROOT: INFO
   LOGGING_LEVEL_MTA_EDA_CONSUMER: DEBUG
 ```
+
+**Note**: The actual docker-compose.yml uses `kafka:29092` (not `general:29092`) and port `8082` for the consumer.
 
 ### .env File Example
 ```bash
@@ -462,13 +463,10 @@ environment:
 KAFKA_TOPIC=orders
 
 # Kafka broker address
-SPRING_KAFKA_BOOTSTRAP_SERVERS=general:29092
+SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092
 
 # Consumer group
 SPRING_KAFKA_CONSUMER_GROUP_ID=order-service-group
-
-# Server port
-SERVER_PORT=8081
 
 # Logging
 LOGGING_LEVEL_ROOT=INFO
@@ -682,9 +680,11 @@ When modifying configuration:
 - **Reset**: Change `auto-offset-reset=latest` temporarily to see only new messages
 
 ### Health Check Failing
-- **Check**: Service is running on port 8081
+- **Check**: Service is running on port **8082** (not 8081)
 - **Check**: Spring Boot startup completed (takes 10-15 seconds)
-- **Override**: Increase `start_period` in docker-compose healthcheck
+- **Check**: Liveness probe endpoint: `http://localhost:8082/order-service/health/live`
+- **Override**: Increase `start_period` in docker-compose healthcheck (currently 20s)
+- **Common Issue**: Kafka unavailable makes readiness fail (expected); liveness should still pass
 
 ### Too Much/Not Enough Logging
 - **Increase**: `LOGGING_LEVEL_MTA_EDA_CONSUMER=TRACE`
@@ -702,42 +702,56 @@ When modifying configuration:
 docker compose up
 ```
 - **Purpose**: Testing Consumer API independently
-- **Network**: Creates `consumer_default` network
-- **Kafka Connection**: Fails gracefully (autoStartup=true)
-- **Health Check**: Shows Kafka as DOWN
+- **Network**: Uses default Docker network + external producer network (if available)
+- **Kafka Connection**: Attempts to connect; fails gracefully if Kafka unavailable (admin.fail-fast=false)
+- **Health Check**: Shows Kafka as DOWN when not connected
 - **API**: Fully functional on port 8082
-- **Message Consumption**: Disabled
+- **Message Consumption**: Disabled when Kafka unavailable
+- **Auto-Recovery**: KafkaConnectivityService monitors and auto-reconnects when Kafka becomes available
 
-#### Integrated Mode (With Producer's Kafka)
+#### Integrated Mode (With Producer's Kafka) - RECOMMENDED
 ```bash
-# Step 1: Start Producer
+# Step 1: Start Producer first (includes Kafka and Zookeeper)
 cd ../producer && docker compose up -d
 
-# Step 2: Start Consumer
+# Step 2: Start Consumer (automatically connects to producer network)
 cd ../consumer && docker compose up -d
-
-# Step 3: Connect Consumer to Producer's network
-docker network connect producer_ecommerce-network order-service
-
-# Step 4: Restart Consumer
-docker restart order-service
 ```
-- **Network**: Joins `producer_ecommerce-network`
+- **Network**: Automatically joins `producer_ecommerce-network` (configured in docker-compose.yml)
 - **Kafka Connection**: Resolves `kafka:29092` via Docker DNS
-- **Health Check**: Shows Kafka as UP
-- **Message Consumption**: Enabled
+- **Health Check**: Shows Kafka as UP once connected
+- **Message Consumption**: Enabled automatically
+- **No Manual Network Connection Needed**: The docker-compose.yml includes the external network configuration
+
+**Why This Works:**
+The consumer's docker-compose.yml declares:
+```yaml
+networks:
+  - default              # Consumer's own network
+  - producer-net         # External network from producer
+
+networks:
+  producer-net:
+    external: true
+    name: producer_ecommerce-network
+```
+This allows the consumer to connect to both its own default network and the producer's external network without manual intervention.
 
 ### Network Configuration
-- **Standalone**: Uses default Docker network
-- **Integrated**: Connects to `producer_ecommerce-network`
+- **Standalone**: Uses default Docker network only
+- **Integrated**: Uses default Docker network + `producer_ecommerce-network` external network
 - **Kafka Service Name**: `kafka` (resolves to Kafka broker in Producer network)
 - **Kafka Port**: `29092` (internal Docker network port)
+- **DNS Resolution**: Docker provides internal DNS for container name resolution
 
 ### Service Ports
 - **Order Service**: `8082` (Consumer API)
 
 ### Environment Variables (docker-compose.yml)
-- `SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092` - Connect via Producer's network
+- `SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092` - Kafka broker address (overrides `KAFKA_BOOTSTRAP_SERVERS` default)
+  - **Note**: Spring Boot automatically converts `SPRING_KAFKA_BOOTSTRAP_SERVERS` to `spring.kafka.bootstrap-servers`
+  - Application.properties uses `${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}`, but Docker uses the Spring Boot convention
+  - Both work: Spring Boot handles the property name transformation
 - `SPRING_KAFKA_CONSUMER_GROUP_ID=order-service-group` - Consumer group ID
 - `KAFKA_TOPIC=orders` - Topic to consume from
 - `LOGGING_LEVEL_ROOT=INFO` - Root logging level
@@ -747,8 +761,9 @@ docker restart order-service
 - **autoStartup=true** in KafkaConsumerConfig allows Consumer to start immediately
 - Listeners attempt to connect on startup
 - If Kafka is unavailable, Spring logs errors but application stays up
-- KafkaConnectivityService monitors health status independently
+- KafkaConnectivityService monitors health status independently with exponential backoff
 - Enables faster startup and immediate consumption when Kafka is ready
+- Auto-recovery: Reconnects automatically when Kafka becomes available
 
 ---
 
