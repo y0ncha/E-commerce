@@ -39,18 +39,19 @@ Configuration values follow the precedence: **Command-line → Environment Varia
 
 ### Bootstrap Servers
 
-#### `spring.kafka.bootstrap-servers=kafka:29092`
+#### `spring.kafka.bootstrap-servers=${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}`
 - **Purpose**: Address(es) of Kafka brokers
-- **Default**: `kafka:29092`
+- **Default**: `localhost:9092` (for local development)
+- **Docker Override**: `KAFKA_BOOTSTRAP_SERVERS=kafka:29092` (set in docker-compose.yml)
 - **Why This Value**: 
-  - Docker hostname resolution (internal container name)
+  - Docker: Uses hostname resolution (internal container name `kafka`)
   - Port 29092 is the internal protocol port (not exposed externally)
   - Configured by producer's docker-compose
-- **Override**: `SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka-external:9092`
-- **Typical Values**:
-  - Docker: `kafka:29092`
-  - Local Dev: `localhost:9092`
-  - Remote: `kafka-broker-1.example.com:9092,kafka-broker-2.example.com:9092`
+  - Local Dev: Defaults to `localhost:9092` for development without Docker
+- **Override Examples**:
+  - Docker: `KAFKA_BOOTSTRAP_SERVERS=kafka:29092` (set in docker-compose.yml)
+  - Local Dev: Use default `localhost:9092`
+  - Remote: `KAFKA_BOOTSTRAP_SERVERS=kafka-broker-1.example.com:9092,kafka-broker-2.example.com:9092`
 
 ### Consumer Group Configuration
 
@@ -67,6 +68,78 @@ Configuration values follow the precedence: **Command-line → Environment Varia
 #### `spring.kafka.consumer.group-id=${SPRING_KAFKA_CONSUMER_GROUP_ID}`
 - **Alternative Override**: Via environment variable
 - **Example**: `SPRING_KAFKA_CONSUMER_GROUP_ID=order-service-group-v2`
+
+### Kafka Connection Timeouts (Optimized for Fast Startup)
+
+The consumer is configured with aggressive timeout settings for faster failure detection and reconnection:
+
+#### `spring.kafka.properties.connections.max.idle.ms=5000`
+- **Purpose**: Maximum idle time before closing idle connections
+- **Default in Kafka**: 540000ms (9 minutes)
+- **Our Value**: 5000ms (5 seconds)
+- **Why Reduced**: Faster detection of dead connections, quicker cleanup of idle connections
+- **Impact**: Connections that are idle for >5 seconds are closed and recreated when needed
+
+#### `spring.kafka.consumer.properties.session.timeout.ms=10000`
+- **Purpose**: Timeout for consumer group session (heartbeat detection)
+- **Default in Kafka**: 45000ms (45 seconds)
+- **Our Value**: 10000ms (10 seconds)
+- **Why Reduced**: Faster broker failure detection, quicker rebalancing
+- **Impact**: Consumer must send heartbeat within 10s or be removed from group
+
+#### `spring.kafka.consumer.properties.heartbeat.interval.ms=2000`
+- **Purpose**: Frequency of heartbeat messages to broker
+- **Default in Kafka**: 3000ms (3 seconds)
+- **Our Value**: 2000ms (2 seconds)
+- **Why Reduced**: More frequent liveness detection
+- **Relationship**: Must be less than `session.timeout.ms / 3` (10000 / 3 = 3333ms)
+
+#### `spring.kafka.consumer.properties.metadata.max.age.ms=5000`
+- **Purpose**: How often to refresh cluster metadata
+- **Default in Kafka**: 300000ms (5 minutes)
+- **Our Value**: 5000ms (5 seconds)
+- **Why Reduced**: Faster detection of topic/partition changes, quicker startup
+- **Impact**: Consumer refreshes broker/topic metadata every 5 seconds
+
+#### `spring.kafka.consumer.properties.request.timeout.ms=10000`
+- **Purpose**: Maximum wait time for request responses
+- **Default in Kafka**: 30000ms (30 seconds)
+- **Our Value**: 10000ms (10 seconds)
+- **Why Reduced**: Faster retry cycles, quicker failure detection
+- **Impact**: Requests that take >10s will timeout and retry
+
+**Timeout Configuration Summary:**
+```
+Optimized Values (Fast Recovery):
+- connections.max.idle.ms:    5s  (vs default 540s)
+- session.timeout.ms:         10s (vs default 45s)
+- heartbeat.interval.ms:       2s (vs default 3s)
+- metadata.max.age.ms:         5s (vs default 300s)
+- request.timeout.ms:         10s (vs default 30s)
+
+Benefits:
+✅ Faster startup (metadata refresh every 5s vs 5min)
+✅ Quicker failure detection (10s session vs 45s)
+✅ Faster recovery from network issues
+✅ More responsive to broker topology changes
+
+Trade-offs:
+⚠ Slightly more network traffic (frequent heartbeats/metadata)
+⚠ Less tolerant of brief network hiccups
+```
+
+### Kafka Admin Configuration
+
+#### `spring.kafka.admin.fail-fast=false`
+- **Purpose**: Controls startup behavior when Kafka is unavailable
+- **Default**: `true` (application fails to start if Kafka is down)
+- **Our Value**: `false`
+- **Why `false`**: 
+  - Allows consumer to start even when Kafka is unavailable
+  - Essential for standalone testing and development
+  - Works with KafkaConnectivityService for background monitoring
+  - Prevents crash loops during Kafka maintenance
+- **Behavior**: Application starts successfully; KafkaConnectivityService monitors and auto-reconnects
 
 ### Offset Management (Critical for At-Least-Once)
 
@@ -281,21 +354,48 @@ Need More Throughput?
 
 ### Health Endpoint
 
-#### `management.endpoints.web.exposure.include=health`
-- **Purpose**: Expose health check endpoint
-- **Default**: Limited (only health, metrics)
-- **Endpoint**: `GET http://localhost:8081/actuator/health`
+#### Actuator Health Endpoint (Spring Boot)
+- **Purpose**: Basic application health check (managed by Spring Boot Actuator)
+- **Endpoint**: `GET http://localhost:8082/actuator/health`
 - **Response**:
   ```json
   {
+    "status": "UP"
+  }
+  ```
+- **Note**: This is Spring Boot's default actuator endpoint. The consumer also provides custom health endpoints.
+
+#### Custom Health Endpoints (OrderController)
+
+The consumer implements two custom health endpoints for Kubernetes/Docker orchestration:
+
+##### **Liveness Probe** (GET /order-service/health/live)
+- **Purpose**: Docker/Kubernetes uses this to detect dead containers
+- **Endpoint**: `http://localhost:8082/order-service/health/live`
+- **Response**:
+  ```json
+  {
+    "serviceName": "Order Service (Consumer)",
+    "type": "liveness",
     "status": "UP",
-    "components": {
-      "kafkaConsumer": {
-        "status": "UP"
-      }
+    "timestamp": "2026-01-02T12:00:00.123456Z",
+    "checks": {
+      "service": {"status": "UP", "details": "Order Service is running and responsive"}
     }
   }
   ```
+- **HTTP Status**: Always 200 OK (if service is running)
+- **Used By**: Docker healthcheck in docker-compose.yml
+- **Docker Config**: `test: [ "CMD", "curl", "-f", "http://localhost:8082/order-service/health/live" ]`
+
+##### **Readiness Probe** (GET /order-service/health/ready)
+- **Purpose**: Indicates if the service is ready to handle requests
+- **Endpoint**: `http://localhost:8082/order-service/health/ready`
+- **Checks**: Service status, Kafka connectivity, and local state store
+- **HTTP Status**: 
+  - 200 OK if ready (Kafka UP or DEGRADED)
+  - 503 Service Unavailable if not ready (Kafka DOWN)
+- **See Full Documentation**: Jump to "Health & Monitoring" section below for complete details
 
 ---
 
@@ -681,17 +781,20 @@ NEW (0) → CONFIRMED (1) → DISPATCHED (2) → COMPLETED (3)
 
 #### ✅ **Valid Transitions**
 
-1. **Forward Progression**
+1. **Strictly Sequential Forward Progression**
    - NEW → CONFIRMED (0 → 1) ✅
    - CONFIRMED → DISPATCHED (1 → 2) ✅
    - DISPATCHED → COMPLETED (2 → 3) ✅
-   - NEW → DISPATCHED (0 → 2, skip CONFIRMED) ✅
+   - **Note**: You **MUST** progress one step at a time. Skipping states is NOT allowed.
+   - **Example**: NEW → DISPATCHED is **INVALID** ❌ (must go NEW → CONFIRMED → DISPATCHED)
+   - **Example**: CONFIRMED → COMPLETED is **INVALID** ❌ (must go CONFIRMED → DISPATCHED → COMPLETED)
 
 2. **Cancellation (Terminal State)**
    - NEW → CANCELED ✅
    - CONFIRMED → CANCELED ✅
    - DISPATCHED → CANCELED ✅
-   - COMPLETED → CANCELED ✅ (can cancel even completed orders)
+   - **Note**: CANCELED is a terminal state reachable from any non-terminal state
+   - **Exception**: COMPLETED → CANCELED is **NOT allowed** (COMPLETED is also terminal)
 
 #### ❌ **Invalid Transitions**
 
