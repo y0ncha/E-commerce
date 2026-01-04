@@ -115,11 +115,11 @@ sequenceDiagram
 
 **Implementation**: Kafka Producer Client with Internal Retries
 
-- **Action**: The producer is configured for **12 retries** within a **120-second window** (`delivery.timeout.ms=120000`).
-- **Per-Attempt Timeout**: Each individual request attempt times out after **5 seconds** (`request.timeout.ms=5000`).
+- **Action**: The producer is configured for **continuous retries** (MAX_INT retries) within an **8-second delivery window** (`delivery.timeout.ms=8000`).
+- **Per-Attempt Timeout**: Each individual request attempt times out after **3 seconds** (`request.timeout.ms=3000`).
 - **Application Timeout**: API blocks for **10 seconds** (`producer.send.timeout.ms=10000`).
-- **Goal**: Ensure that if a user receives a failure response (after the 10s API timeout), the Kafka client has **already stopped** trying to send the message. This prevents "Ghost Successes" where an order lands in Kafka after the user was told it failed.
-- **API Response**: Returns **500 Internal Server Error**. 
+- **Goal**: Ensure that if a user receives a failure response (after the 10s API timeout), the Kafka client has **already stopped** trying to send the message (at 8s). This prevents "Ghost Successes" where an order lands in Kafka after the user was told it failed.
+- **API Response**: Returns **500 Internal Server Error** or **503 Service Unavailable**. 
 - **Architectural Reasoning**: A failed send during an active request is an unexpected server condition.
 
 **Retry Flow:**
@@ -172,20 +172,16 @@ Retry 3:    400ms  (100 * 2^2)
 Retry 4:    800ms
 Retry 5:    1.6s
 Retry 6:    3.2s
-Retry 7:    6.4s
-Retry 8:    12.8s
-Retry 9:    25.6s
-Retry 10:   51.2s
-Retry 11:   102.4s (capped before delivery timeout)
+(continues until 8s delivery timeout)
 
-Total retry window: ~60 seconds
+Total retry window: ~8 seconds
 Application timeout: 10 seconds (prevents ghost successes)
-Max delivery timeout: 120 seconds (safety buffer)
+Max delivery timeout: 8 seconds (Kafka stops before API timeout)
 ```
 
 **Why This Works:**
-- Application timeout (10s) < Kafka's internal retry window (60s)
-- If application timeout fires, Kafka client stops retrying
+- Delivery timeout (8s) < Application timeout (10s)
+- If application timeout fires, Kafka client has already stopped retrying
 - No message arrives in Kafka after client receives error response
 - Guarantees client knows the outcome: either success or definitive failure
 
@@ -287,10 +283,11 @@ sequenceDiagram
 
 **Configuration:**
 ```properties
-resilience4j.circuitbreaker.instances.cartService.failureRateThreshold=50
-resilience4j.circuitbreaker.instances.cartService.slidingWindowSize=10
-resilience4j.circuitbreaker.instances.cartService.waitDurationInOpenState=30s
-resilience4j.circuitbreaker.instances.cartService.permittedNumberOfCallsInHalfOpenState=3
+resilience4j.circuitbreaker.instances.cartService.failure-rate-threshold=50
+resilience4j.circuitbreaker.instances.cartService.sliding-window-size=10
+resilience4j.circuitbreaker.instances.cartService.wait-duration-in-open-state=30s
+resilience4j.circuitbreaker.instances.cartService.permitted-number-of-calls-in-half-open-state=3
+resilience4j.circuitbreaker.instances.cartService.sliding-window-type=COUNT_BASED
 ```
 
 **Benefits:**
