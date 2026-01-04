@@ -2,6 +2,7 @@ package mta.eda.producer.config;
 
 import mta.eda.producer.model.order.Order;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -108,5 +109,46 @@ public class KafkaProducerConfig {
     @Bean
     public KafkaTemplate<String, Order> kafkaTemplate() {
         return new KafkaTemplate<>(producerFactory());
+    }
+
+    /**
+     * Creates a separate ProducerFactory for DLQ messages.
+     * DLQ messages are String-String (not Order objects) to preserve raw payload.
+     */
+    @Bean
+    public ProducerFactory<String, String> dlqProducerFactory() {
+        Map<String, Object> configProps = new HashMap<>();
+
+        // Bootstrap servers
+        configProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        configProps.put(ProducerConfig.CLIENT_ID_CONFIG, clientId + "-dlq");
+
+        // String serializers for both key and value
+        configProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+
+        // Reliability settings
+        configProps.put(ProducerConfig.ACKS_CONFIG, acks);
+        configProps.put(ProducerConfig.RETRIES_CONFIG, retries);
+        configProps.put(ProducerConfig.RETRY_BACKOFF_MS_CONFIG, retryBackoffMs);
+
+        // Timeouts
+        configProps.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, requestTimeoutMs);
+        configProps.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, deliveryTimeoutMs);
+        configProps.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, maxBlockMs);
+
+        // Idempotence
+        configProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, enableIdempotence);
+
+        return new DefaultKafkaProducerFactory<>(configProps);
+    }
+
+    /**
+     * Creates a KafkaTemplate for sending String messages to DLQ.
+     * Used for poison pills that cannot be deserialized or processed.
+     */
+    @Bean
+    public KafkaTemplate<String, String> dlqKafkaTemplate() {
+        return new KafkaTemplate<>(dlqProducerFactory());
     }
 }

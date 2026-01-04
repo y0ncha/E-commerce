@@ -524,48 +524,69 @@ sequenceDiagram
 
 **Purpose**: Store messages that fail processing after all retry attempts.
 
-**DLT Configuration:**
+**DLQ Topic Configuration:**
 ```properties
-# Automatically created by Spring Kafka
-# Pattern: {original-topic}.DLT
-# Example: order-events.DLT
+# Custom Kafka DLQ topic for storing failed messages
+kafka.dlq.topic.name=orders-dlq
+kafka.dlq.enabled=true
+
+# Topic Details:
+# - Name: orders-dlq
+# - Partitions: 3 (same as main topic for key-partition mapping)
+# - Retention: 7 days (for manual investigation and replay)
+# - Created at: Application startup (via KafkaTopicConfig)
 ```
 
-**DLT Message Headers:**
+**Why a Custom DLQ Topic?**
+- ✅ **Explicit Topic Name**: Using `orders-dlq` instead of `orders.DLT` provides clarity
+- ✅ **Same Partition Count**: 3 partitions (same as `orders` topic) enables potential replay with preserved ordering
+- ✅ **orderId as Key**: Messages maintain the same key for partition routing
+- ✅ **Extended Metadata**: Headers include original-topic, original-partition, original-offset, error-reason, failed-at
+- ✅ **Async Callback**: Logs CRITICAL errors if DLQ send itself fails
+
+**DLQ Message Format:**
 ```json
 {
-  "kafka_dlt-original-topic": "order-events",
-  "kafka_dlt-original-partition": "0",
-  "kafka_dlt-original-offset": "42",
-  "kafka_dlt-exception-message": "Failed to process order: DB connection timeout",
-  "kafka_dlt-exception-stacktrace": "...",
-  "kafka_dlt-original-timestamp": "2026-01-03T10:30:00.000Z"
+  "headers": {
+    "original-topic": "orders",
+    "original-partition": "0",
+    "original-offset": "42",
+    "error-reason": "Failed to process order: DB connection timeout",
+    "failed-at": "2026-01-04T10:30:00.000Z"
+  },
+  "key": "ORD-123456",
+  "value": "{original JSON message payload}"
 }
 ```
 
-**DLT Processing Options:**
+**DLQ Processing Options:**
 
 1. **Manual Investigation**:
-   - DevOps team monitors DLT
-   - Analyze failed messages
-   - Fix root cause (e.g., restore DB)
-   - Manually replay messages
+   - DevOps team monitors `orders-dlq` topic
+   - Analyze failed messages and their error reasons
+   - Fix root cause (e.g., restore DB, fix data)
+   - Manually replay messages from DLQ to `orders` topic
 
-2. **Automated Replay**:
-   - Separate consumer reads from DLT
+2. **Automated Replay** (Future Enhancement):
+   - Separate consumer reads from `orders-dlq`
    - Applies fix/transformation
-   - Republishes to original topic
+   - Republishes to `orders` topic using same `orderId` key
+   - Partition routing ensures messages process in order
 
-3. **Alerting**:
-   - Monitor DLT message count
-   - Alert if count exceeds threshold
-   - Indicates systemic issue
+3. **Alerting & Monitoring**:
+   - Monitor `orders-dlq` message count
+   - Alert if messages appear (indicates systemic issue)
+   - Track error reasons to identify patterns
+   - Examples:
+     - High DB timeout errors → Database issue
+     - JSON deserialization failures → Data quality issue from producer
+     - Connection timeouts → Network issue
 
-**When Messages Go to DLT:**
-- ✅ **After 3 failed retries** (transient errors)
-- ✅ **Immediately** for non-retryable exceptions (poison pills)
-- ✅ **Processing exceptions** (business logic errors)
-- ❌ **NOT** for valid messages that are rejected by sequencing validation
+**When Messages Go to DLQ:**
+- ✅ **After 3 failed retries** (transient errors: timeouts, DB unavailable)
+- ✅ **Non-retryable exceptions** (corrupted data, validation errors)
+- ✅ **Processing exceptions** (unrecoverable business logic errors)
+- ❌ **NOT** for valid messages that are rejected by sequencing validation (these are logged but not sent to DLQ)
 
 ### Kafka Connectivity Monitoring
 

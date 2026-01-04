@@ -5,6 +5,7 @@ import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import mta.eda.producer.exception.ServiceUnavailableException;
 import mta.eda.producer.exception.TopicNotFoundException;
 import mta.eda.producer.model.order.Order;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +13,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -26,6 +28,7 @@ public class KafkaProducerService {
     private static final Logger failedOrdersLogger = LoggerFactory.getLogger("FAILED_ORDERS_LOGGER");
 
     private final KafkaTemplate<String, Order> kafkaTemplate;
+    private final KafkaTemplate<String, String> dlqKafkaTemplate;
     private final KafkaConnectivityService connectivityService;
 
     @Value("${kafka.topic.name}")
@@ -35,8 +38,10 @@ public class KafkaProducerService {
     private long sendTimeoutMs;
 
     public KafkaProducerService(KafkaTemplate<String, Order> kafkaTemplate,
+                                KafkaTemplate<String, String> dlqKafkaTemplate,
                                 KafkaConnectivityService connectivityService) {
         this.kafkaTemplate = kafkaTemplate;
+        this.dlqKafkaTemplate = dlqKafkaTemplate;
         this.connectivityService = connectivityService;
     }
 
@@ -109,5 +114,45 @@ public class KafkaProducerService {
     private void logFailedOrder(String type, String orderId, Order order, String reason) {
         failedOrdersLogger.info("FAILED_ORDER | Type: {} | OrderId: {} | Reason: {} | Payload: {}", 
                 type, orderId, reason, order);
+    }
+
+    /**
+     * Sends a message to the Dead Letter Queue (DLQ) for poison pills.
+     * This method is used when a message cannot be processed after all retries.
+     *
+     * Design Requirements (MTA EDA Course):
+     * 1. Preserve orderId as message key for sequencing and traceability
+     * 2. Add metadata headers (original topic, error reason, timestamp)
+     * 3. Use async callback to log DLQ producer success/failure
+     * 4. Log CRITICAL errors if DLQ send itself fails (requires alerting)
+     *
+     * @param originalTopic the topic where the message originally came from
+     * @param key the message key (orderId) - MUST be preserved
+     * @param value the original message payload
+     * @param errorReason description of why the message failed
+     */
+    public void sendToDlq(String originalTopic, String key, String value, String errorReason) {
+        String dlqTopic = originalTopic + "-dlq";
+
+        ProducerRecord<String, String> record = new ProducerRecord<>(dlqTopic, key, value);
+
+        // Add metadata headers for debugging and traceability
+        record.headers()
+            .add("original-topic", originalTopic.getBytes(StandardCharsets.UTF_8))
+            .add("error-reason", errorReason.getBytes(StandardCharsets.UTF_8))
+            .add("failed-at", String.valueOf(System.currentTimeMillis()).getBytes(StandardCharsets.UTF_8));
+
+        // Async send with callback (course requirement for resiliency)
+        dlqKafkaTemplate.send(record).whenComplete((result, ex) -> {
+            if (ex != null) {
+                logger.error("CRITICAL: Failed to send message to DLQ. Topic={}, Key={}, Error={}",
+                           dlqTopic, key, ex.getMessage());
+                // In production: trigger alert/monitoring system here
+            } else {
+                logger.warn("✓ Message sent to DLQ. Topic={}, Key={}, Partition={}, Offset={}, Reason={}",
+                          dlqTopic, key, result.getRecordMetadata().partition(),
+                          result.getRecordMetadata().offset(), errorReason);
+            }
+        });
     }
 }

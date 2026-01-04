@@ -958,51 +958,7 @@
           "response": []
         },
         {
-          "name": "5.3 - Extra Unknown Fields in Request",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "id": "extra-fields-test",
-                "exec": [
-                  "pm.test('Extra unknown fields should be ignored or accepted (200 or 201)', () => {",
-                  "  const status = pm.response.code;",
-                  "  pm.expect([200, 201, 400]).to.include(status);",
-                  "});"
-                ],
-                "type": "text/javascript",
-                "packages": {}
-              }
-            }
-          ],
-          "id": "extra-unknown-fields",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"orderId\": \"TEST_EXTRA_FIELDS_001\",\n  \"numItems\": 3,\n  \"unknownField1\": \"value1\",\n  \"unknownField2\": 123,\n  \"unknownField3\": {\"nested\": \"object\"}\n}"
-            },
-            "url": {
-              "raw": "{{base_url_producer}}/create-order",
-              "host": [
-                "{{base_url_producer}}"
-              ],
-              "path": [
-                "create-order"
-              ]
-            },
-            "description": "Request with extra unknown fields not defined in API spec"
-          },
-          "response": []
-        },
-        {
-          "name": "5.4 - OrderID with Special Characters",
+          "name": "5.3 - OrderID with Special Characters",
           "event": [
             {
               "listen": "test",

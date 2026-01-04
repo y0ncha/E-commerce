@@ -554,6 +554,134 @@ KAFKA_BOOTSTRAP_SERVERS=general:9092
 
 ---
 
+## Dead Letter Queue (DLQ) Configuration
+
+### DLQ Purpose
+The Dead Letter Queue is a Kafka topic that stores messages that fail delivery after all retry attempts. This prevents data loss and enables investigation and recovery of failed orders.
+
+### DLQ Topic Configuration
+- `kafka.dlq.topic.name=orders-dlq`
+  - **Default**: `orders-dlq`
+  - **Purpose**: Name of the topic for failed messages
+  - **Auto-created**: Yes (via `KafkaTopicConfig.java`)
+  - **Partitions**: 3 (same as main `orders` topic)
+  - **Retention**: 7 days (604,800,000 ms)
+  - **Replication Factor**: 1
+
+### DLQ Feature Flags
+- `kafka.dlq.enabled=true`
+  - **Default**: `true`
+  - **Purpose**: Enable/disable DLQ functionality
+  - **Impact**: Controls whether failed messages are sent to DLQ topic
+
+### When Messages Go to DLQ
+Failed messages are sent to the `orders-dlq` topic when:
+
+1. **Delivery Timeout Exceeded** - Message fails after 8 seconds of retries
+   - Retries exhausted: 1s → 2s → 4s → ... until delivery.timeout.ms reached
+   - Fallback: Message sent to DLQ topic
+
+2. **Circuit Breaker Open** - Kafka calls fail at high rate (50% failure rate)
+   - After Circuit Breaker opens (after 30s wait)
+   - Next requests sent to DLQ instead of attempting Kafka
+
+3. **Non-Recoverable Errors** - Errors that won't resolve with retries
+   - Topic not found
+   - Serialization errors (via async callback)
+
+### DLQ Message Content
+Messages stored in `orders-dlq` topic include:
+
+**Message Structure**:
+- **Key**: `orderId` (preserved from original message)
+- **Value**: Original Order object as JSON
+- **Headers**:
+  - `original-topic`: "orders" (where message came from)
+  - `error-reason`: Description of why delivery failed
+  - `failed-at`: Timestamp when sent to DLQ (milliseconds)
+
+**Example DLQ Message Headers**:
+```
+original-topic: orders
+error-reason: Kafka broker timeout after 8 seconds of retries
+failed-at: 1704358800000
+```
+
+### DLQ Implementation Details
+The DLQ producer is implemented in `KafkaProducerService.java`:
+
+```java
+public void sendToDlq(String originalTopic, String key, String value, String errorReason) {
+    String dlqTopic = originalTopic + "-dlq";  // "orders-dlq"
+    
+    ProducerRecord<String, String> record = new ProducerRecord<>(dlqTopic, key, value);
+    record.headers()
+        .add("original-topic", originalTopic.getBytes())
+        .add("error-reason", errorReason.getBytes())
+        .add("failed-at", String.valueOf(System.currentTimeMillis()).getBytes());
+    
+    dlqKafkaTemplate.send(record).whenComplete((result, ex) -> {
+        if (ex != null) {
+            logger.error("CRITICAL: Failed to send to DLQ");
+        } else {
+            logger.warn("Message sent to DLQ");
+        }
+    });
+}
+```
+
+### DLQ Recovery Procedures
+
+**Manual Investigation** (Recommended for Exercise 2):
+```bash
+# View failed messages in DLQ
+kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+  --topic orders-dlq \
+  --from-beginning \
+  --property print.headers=true \
+  --property print.key=true
+
+# Analyze failure reasons in headers
+# Fix root cause (e.g., restore Kafka, fix network)
+
+# Manually replay messages back to orders topic
+kafka-console-producer.sh --broker-list localhost:9092 \
+  --topic orders < dlq-messages.txt
+```
+
+**Monitoring DLQ Growth**:
+```bash
+# Check message count in DLQ
+kafka-topics.sh --describe --topic orders-dlq \
+  --bootstrap-server localhost:9092
+
+# Set up alerts if DLQ messages accumulate
+# Indicates systematic issue in main topic processing
+```
+
+### Fallback Strategy Summary
+
+The producer implements a **two-tier fallback strategy**:
+
+```
+Order Send Attempt
+  ├─ SUCCESS ✓
+  │  └─ Order delivered to 'orders' topic
+  │
+  └─ FAILURE ✗ (after 8s timeout or Circuit Breaker open)
+     ├─ DLQ Send Attempt (to 'orders-dlq' topic)
+     │  ├─ SUCCESS ✓
+     │  │  └─ Message stored in DLQ for investigation
+     │  │     (Kafka is operational but order delivery failed)
+     │  │
+     │  └─ FAILURE ✗
+     │     └─ File-Based Fallback (to 'failed-orders.log')
+     │        └─ Message logged to file
+     │           (Kafka infrastructure is down, no DLQ available)
+```
+
+---
+
 ## File Locations
 
 ### Configuration Files

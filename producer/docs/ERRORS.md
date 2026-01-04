@@ -299,10 +299,69 @@ resilience4j.circuitbreaker.instances.cartService.sliding-window-type=COUNT_BASE
 - ✅ Prevents cascade failures to upstream services
 
 ---
-### Level 3: Data Safety (Manual Recovery Fallback)
-- **Action**: If the timeout is reached OR the Circuit Breaker is open, the system logs the **full order details** to a dedicated `failed-orders.log` file.
+### Level 3: Data Safety (Multiple Fallback Mechanisms)
+
+The system implements **two complementary fallback mechanisms** to ensure no order data is lost even during infrastructure failures:
+
+#### 3a: Kafka DLQ Topic (Primary Fallback)
+- **Mechanism**: Failed messages are sent to the `orders-dlq` Kafka topic (if Kafka is operational)
+- **Implementation**: `KafkaProducerService.sendToDlq()` method
+- **Trigger**: When message delivery fails after timeout or Circuit Breaker opens
+- **Topic Details**:
+  ```properties
+  Topic Name: orders-dlq
+  Partitions: 3 (same as main topic for potential replay with ordering preserved)
+  Retention: 7 days (allows time for manual investigation)
+  Key: orderId (preserved from original message for traceability)
+  ```
+- **Message Content**:
+  - Raw order JSON (preserved as-is)
+  - Metadata headers: original-topic, error-reason, failed-at
+  - Async callback logs success/failure
+- **Goal**: Enable DevOps team to investigate failures and manually replay orders once infrastructure is restored
+- **Recovery Process**:
+  1. Monitor `orders-dlq` for failed messages
+  2. Analyze error reasons and root cause
+  3. Fix underlying issue (restore Kafka, fix network, etc.)
+  4. Replay messages from DLQ back to `orders` topic
+
+#### 3b: File-Based Fallback (Infrastructure Failure Protection)
+- **Action**: If the timeout is reached OR the Circuit Breaker is open AND Kafka/DLQ send fails, the system logs the **full order details** to a dedicated `failed-orders.log` file.
 - **Implementation**: A dedicated logger (`FAILED_ORDERS_LOGGER`) captures the order payload and failure reason.
-- **Goal**: Ensure no customer data is lost. This allows an administrator to re-process the orders once the Kafka cluster is restored.
+- **Rationale**: This protects against the scenario where Kafka itself is completely down/unreachable, making the DLQ topic inaccessible.
+- **Log Format**:
+  ```
+  FAILED_ORDER | Type: KAFKA_DOWN | OrderId: ORD-123456 | Reason: Broker unreachable | Payload: {...}
+  ```
+- **Location**: `producer/logs/failed-orders.log`
+- **Retention**: Persistent (until manually archived)
+- **Goal**: Ensure no customer data is lost even if entire Kafka cluster fails
+
+**Fallback Strategy Flowchart:**
+```
+Order Send Attempt
+  ├─ SUCCESS ✓
+  │  └─ Order delivered to 'orders' topic
+  │
+  └─ FAILURE ✗
+     ├─ DLQ Send Attempt (to 'orders-dlq' topic)
+     │  ├─ SUCCESS ✓
+     │  │  └─ Message stored in DLQ for manual replay
+     │  │     (Kafka is operational but order delivery failed)
+     │  │
+     │  └─ FAILURE ✗
+     │     └─ File-Based Fallback (to 'failed-orders.log')
+     │        └─ Message logged to file
+     │           (Kafka infrastructure is down, no DLQ available)
+```
+
+**When Each Mechanism is Used:**
+| Scenario | Primary Fallback | Secondary Fallback |
+|----------|------------------|-------------------|
+| Order delivery fails, Kafka OK | ✅ DLQ Topic (orders-dlq) | N/A |
+| Kafka broker down | ❌ DLQ unavailable | ✅ File Log (failed-orders.log) |
+| Network partition | ❌ DLQ unreachable | ✅ File Log (failed-orders.log) |
+| DLQ send fails | ❌ DLQ send error | ✅ File Log (failed-orders.log) |
 
 ---
 
