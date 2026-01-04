@@ -119,8 +119,10 @@ sequenceDiagram
 - **Per-Attempt Timeout**: Each individual request attempt times out after **3 seconds** (`request.timeout.ms=3000`).
 - **Application Timeout**: API blocks for **10 seconds** (`producer.send.timeout.ms=10000`).
 - **Goal**: Ensure that if a user receives a failure response (after the 10s API timeout), the Kafka client has **already stopped** trying to send the message (at 8s). This prevents "Ghost Successes" where an order lands in Kafka after the user was told it failed.
-- **API Response**: Returns **500 Internal Server Error** or **503 Service Unavailable**. 
-- **Architectural Reasoning**: A failed send during an active request is an unexpected server condition.
+- **API Response**: 
+  - Returns **500 Internal Server Error** if Kafka send fails (ServiceUnavailableException)
+  - Returns **503 Service Unavailable** if Circuit Breaker is open (CallNotPermittedException)
+- **Architectural Reasoning**: 500 indicates an unexpected server error during the send operation; 503 indicates the service is protecting itself from cascade failures.
 
 **Retry Flow:**
 
@@ -510,8 +512,10 @@ HTTP Status: **503 Service Unavailable**
 
 **Architectural Reasoning**:
 - This is a **temporary infrastructure issue**, not a configuration error
-- Returns 500 (Internal Server Error) because the send operation failed unexpectedly during request processing
-- **Circuit Breaker Integration**: After repeated failures, circuit opens (returns 503 CIRCUIT_BREAKER_OPEN)
+- Returns **500 Internal Server Error** because the send operation failed unexpectedly during request processing
+- Thrown as `ServiceUnavailableException` with type `KAFKA_DOWN`
+- **Circuit Breaker Integration**: After repeated failures (50% failure rate), circuit breaker opens
+  - Circuit open state throws `CallNotPermittedException` → returns **503 Service Unavailable** with type `CIRCUIT_BREAKER_OPEN`
 - **Auto-Recovery**: Background monitoring continuously retries with exponential backoff
 - Once Kafka is restored, service automatically recovers without restart
 

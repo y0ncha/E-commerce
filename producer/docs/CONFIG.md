@@ -575,10 +575,13 @@ KAFKA_BOOTSTRAP_SERVERS=general:9092
 ## Docker Deployment
 
 ### Network Configuration
-- **Network Name**: `producer_ecommerce-network`
+- **Network Name**: `ecommerce-network` (defined in docker-compose.yml)
+  - Docker Compose will prefix this with the project directory name at runtime
+  - For example, when running from the `producer` directory: `producer_ecommerce-network`
 - **Type**: Bridge network
 - **Purpose**: Shared network for Zookeeper, Kafka, and Cart Service
 - **Consumer Access**: Consumer can join this network to access Kafka
+- **Finding the actual network name**: Run `docker network ls` to see the prefixed name
 
 ### Service Ports
 - **Kafka External**: `9092` (host machine access)
