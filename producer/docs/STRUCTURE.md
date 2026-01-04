@@ -303,7 +303,7 @@ producer/
 │   │   │   └── UpdateOrderRequest.java        # PUT /update-order DTO
 │   │   ├── config/
 │   │   │   ├── KafkaProducerConfig.java       # Kafka producer configuration
-│   │   │   └── KafkaTopicConfig.java          # Topic auto-creation
+│   │   │   └── KafkaTopicConfig.java          # Topic auto-creation (NewTopic bean)
 │   │   └── exception/
 │   │       ├── GlobalExceptionHandler.java    # Centralized error handling
 │   │       ├── ProducerSendException.java     # Kafka send failure exception
@@ -325,6 +325,7 @@ producer/
 
 ### Services
 - **KafkaProducerService**: Synchronous Kafka message publishing with error handling
+- **KafkaConnectivityService**: Background monitoring of Kafka broker and topic availability with exponential backoff retry
 - **KafkaHealthService**: Kafka connectivity and topic existence checks for health endpoints
 - **OrderService**: Business logic for order creation/update and ID normalization
 
@@ -336,7 +337,7 @@ producer/
 
 ### Configuration
 - **KafkaProducerConfig**: Kafka producer settings (acks=all, idempotence, etc.)
-- **KafkaTopicConfig**: Topic creation and configuration
+- **KafkaTopicConfig**: Defines NewTopic bean that auto-creates the 'orders' topic on application startup if it doesn't exist
 
 ### Exception Handling
 - **GlobalExceptionHandler**: Centralized exception handling for all endpoints

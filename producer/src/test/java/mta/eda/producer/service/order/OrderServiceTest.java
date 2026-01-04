@@ -79,18 +79,18 @@ class OrderServiceTest {
         CreateOrderRequest createRequest = new CreateOrderRequest("5555", 1);
         orderService.createOrder(createRequest);
         
-        UpdateOrderRequest updateRequest = new UpdateOrderRequest("5555", "shipped");
-        
+        UpdateOrderRequest updateRequest = new UpdateOrderRequest("5555", "confirmed");
+
         Order updatedOrder = orderService.updateOrder(updateRequest);
         
-        assertEquals("shipped", updatedOrder.status());
+        assertEquals("confirmed", updatedOrder.status());
         verify(kafkaProducerService, times(2)).sendOrder(anyString(), any());
     }
 
     @Test
     void updateOrder_NonExistentOrder_ShouldThrowException() {
-        UpdateOrderRequest updateRequest = new UpdateOrderRequest("9999", "shipped");
-        
+        UpdateOrderRequest updateRequest = new UpdateOrderRequest("9999", "confirmed");
+
         assertThrows(OrderNotFoundException.class, () -> orderService.updateOrder(updateRequest));
     }
 

@@ -607,10 +607,13 @@ The consumer implements a **HealthService** to monitor service health and depend
 - On exception: Returns `HealthCheck("DOWN", "Service error: ...")`
 
 #### **Kafka Broker Health Check** (`getKafkaStatus()`)
-- Attempts to verify Kafka connectivity via `KafkaTemplate`
-- Returns `HealthCheck("UP", "Kafka broker is accessible")` on success
-- On exception: Returns `HealthCheck("DOWN", "Kafka broker is unavailable: ...")`
-- Critical for readiness probe
+- Retrieves cached Kafka connectivity status from `KafkaConnectivityService`
+- Returns one of three states:
+  - `HealthCheck("UP", "Connected and consuming from topics")` - Fully operational
+  - `HealthCheck("DEGRADED", "Connected to broker but topic 'orders' not ready")` - Temporary issue
+  - `HealthCheck("DOWN", "Cannot connect to Kafka broker at kafka:29092")` - Connection failed
+- Background monitoring continuously checks Kafka with exponential backoff
+- Critical for readiness probe - determines if consumer can process messages
 
 #### **Local State Store Health Check** (`getLocalStateStatus()`)
 - Verifies in-memory `processedOrderStore` is accessible
@@ -636,6 +639,17 @@ The consumer implements a **HealthService** to monitor service health and depend
 - **Logging**: `logger.debug("Liveness probe called")`
 
 #### **Readiness Probe** (GET /order-service/health/ready)
+
+**Readiness Logic:**
+```java
+// Consumer cannot function without Kafka, so readiness includes Kafka check
+boolean serviceUp = "UP".equals(serviceStatus.status());
+boolean stateUp = "UP".equals(stateStatus.status());
+boolean kafkaUp = "UP".equals(kafkaStatus.status());
+boolean kafkaAvailable = kafkaUp || "DEGRADED".equals(kafkaStatus.status());
+boolean ready = serviceUp && stateUp && kafkaAvailable;
+```
+
 **When Kafka is UP:**
 ```json
 {
@@ -645,13 +659,32 @@ The consumer implements a **HealthService** to monitor service health and depend
   "timestamp": "2026-01-02T12:00:00.123456Z",
   "checks": {
     "service": {"status": "UP", "details": "Order Service is running and responsive"},
-    "kafka": {"status": "UP", "details": "Kafka broker is accessible"},
+    "kafka": {"status": "UP", "details": "Connected and consuming from topics"},
     "local-state": {"status": "UP", "details": "Local order state store is accessible"}
   }
 }
 ```
 - **HTTP Status**: 200 OK
 - **Purpose**: Service is ready to process requests
+- **Orchestration**: Kubernetes/Docker routes traffic to this instance
+
+**When Kafka is DEGRADED:**
+```json
+{
+  "serviceName": "Order Service (Consumer)",
+  "type": "readiness",
+  "status": "UP",
+  "timestamp": "2026-01-02T12:00:00.123456Z",
+  "checks": {
+    "service": {"status": "UP", "details": "Order Service is running and responsive"},
+    "kafka": {"status": "DEGRADED", "details": "Connected to broker but listeners not running"},
+    "local-state": {"status": "UP", "details": "Local order state store is accessible"}
+  }
+}
+```
+- **HTTP Status**: 200 OK (graceful degradation)
+- **Purpose**: Temporary Kafka issues don't immediately fail readiness
+- **Behavior**: Consumer may still recover without restart
 
 **When Kafka is DOWN:**
 ```json
@@ -662,14 +695,26 @@ The consumer implements a **HealthService** to monitor service health and depend
   "timestamp": "2026-01-02T12:00:00.123456Z",
   "checks": {
     "service": {"status": "UP", "details": "Order Service is running and responsive"},
-    "kafka": {"status": "DOWN", "details": "Kafka broker is unavailable: Connection refused"},
+    "kafka": {"status": "DOWN", "details": "Cannot connect to Kafka broker at kafka:29092"},
     "local-state": {"status": "UP", "details": "Local order state store is accessible"}
   }
 }
 ```
-- **HTTP Status**: 503 Service Unavailable
-- **Purpose**: Kubernetes removes service from load balancer
+- **HTTP Status**: **503 Service Unavailable**
+- **Purpose**: Consumer cannot process messages without Kafka
+- **Orchestration**: Kubernetes/Docker removes instance from load balancer
+- **Recovery**: Automatically restored when Kafka reconnects (background monitoring)
 - **Logging**: `logger.debug("Readiness probe called")`
+
+**Readiness States Summary:**
+
+| Service | Local State | Kafka | HTTP Status | Ready? | Routing |
+|---------|-------------|-------|-------------|--------|---------|
+| UP | UP | UP | 200 OK | ✅ Yes | Traffic routed |
+| UP | UP | DEGRADED | 200 OK | ✅ Yes | Traffic routed |
+| UP | UP | **DOWN** | **503** | ❌ No | Traffic blocked |
+| UP | DOWN | UP | 503 | ❌ No | Traffic blocked |
+| DOWN | UP | UP | 503 | ❌ No | Traffic blocked |
 
 ---
 

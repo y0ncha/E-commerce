@@ -275,9 +275,224 @@ SendResult<String, Order> result = kafkaTemplate.send(topicName, orderId, order)
   - Always returns 200 OK (checks service only)
   - No Kafka dependency
 - **GET `/cart-service/health/ready`**
+  - **Fresh Status Check**: Pings Kafka before responding (no retries, single attempt)
+  - Updates cached status if Kafka state changed
   - Returns 200 OK if Kafka reachable + topic exists
   - Returns 503 Service Unavailable if Kafka down
-  - Checks both service and Kafka
+  - Fast response (~3 seconds max for ping)
+  - Ensures health status is always current, not stale
+
+---
+
+## Kafka Connectivity Monitoring
+
+The `KafkaConnectivityService` provides **continuous background monitoring** of Kafka broker and topic availability with sophisticated resilience patterns.
+
+### Features
+- **Asynchronous Background Monitoring**: Non-blocking, runs in dedicated thread
+- **Exponential Backoff Retry**: Powered by Resilience4j with intelligent retry intervals
+- **Pre-cached Status**: Instant health check responses (no blocking API calls)
+- **Persistent Retry**: Never gives up - continuously retries until connection restored
+- **Intelligent Error Detection**: Two-pass approach to distinguish between:
+  - **KAFKA_DOWN**: Connection/timeout errors (broker unreachable)
+  - **TOPIC_NOT_FOUND**: Topic doesn't exist (broker reachable but topic missing)
+- **Topic Detection**: Verifies topic exists and has ready partitions with leaders
+
+### Retry Strategy
+The service uses **exponential backoff** with the following characteristics:
+
+**Initial Phase (Fast Recovery):**
+- Starts at **100ms** for aggressive first retries
+- Multiplier: **2x** exponential
+- Retry sequence: 100ms → 200ms → 400ms → 800ms → 1.6s → 3.2s → 5s
+- **Max interval capped at 5 seconds** to keep reconnects responsive
+
+**Steady State:**
+- Once connected and topic ready: checks every **30 seconds**
+- If connection lost: immediately switches back to aggressive retry mode
+- If topic missing: keeps checking every **1 second**
+
+### Error Detection Strategy
+The `KafkaConnectivityService` uses a **two-pass detection approach** to accurately classify errors:
+
+**Pass 1 - Rule Out Connection Issues:**
+- Checks for `TimeoutException`, `IOException`, connection refused errors
+- If found with timeout/connection messages → Returns `KAFKA_DOWN`
+- Prevents false positives where metadata errors are mistaken for topic issues
+
+**Pass 2 - Check for Topic Issues:**
+- Only after ruling out connection problems
+- Checks for `UnknownTopicOrPartitionException`
+- If found → Returns `TOPIC_NOT_FOUND`
+
+**Why This Matters:**
+- **Accurate Diagnostics**: Operators know if it's infrastructure (Kafka down) vs. configuration (topic missing)
+- **Correct HTTP Status**: 
+  - KAFKA_DOWN → 503 (temporary, retry later)
+  - TOPIC_NOT_FOUND → 500 (configuration error, needs admin action)
+- **Better Monitoring**: Alerts can distinguish between transient and persistent issues
+
+### Health Check Ping Mechanism
+When health endpoints are called, the service performs a **fresh ping** to Kafka to ensure status is current:
+
+**How It Works:**
+1. **On-Demand Check**: When `/health/ready` is called, `pingKafka()` executes
+2. **Single Attempt**: No retries, just one quick connectivity test (3 second timeout)
+3. **Status Update**: If Kafka state changed (e.g., went from UP to DOWN), cache is updated immediately
+4. **Return Fresh Status**: Health endpoint returns the most current status
+
+**Benefits:**
+- **No Stale Data**: Health checks reflect actual current state, not cached state from 30s ago
+- **Fast Detection**: Status changes detected immediately when health endpoint is called
+- **Orchestrator-Friendly**: Kubernetes/Docker get accurate readiness immediately
+- **No Overhead**: Only pings when health endpoint is called, not continuously
+
+**Example Scenario:**
+```
+1. Background monitor checks Kafka at 10:00:00 → Status: UP
+2. Kafka crashes at 10:00:15
+3. Health check called at 10:00:20:
+   - pingKafka() detects Kafka is DOWN (fresh check)
+   - Updates cache: kafkaConnected = false
+   - Returns 503 Service Unavailable immediately
+4. No need to wait for next background check (which would be at 10:00:30)
+```
+
+**Implementation:**
+```java
+// HealthService.java
+public HealthCheck getKafkaStatus() {
+    // Ping Kafka to get fresh status (updates cache if changed)
+    kafkaConnectivityService.pingKafka();
+    
+    // Return current status (potentially just updated by ping)
+    boolean healthy = kafkaConnectivityService.isHealthy();
+    String details = kafkaConnectivityService.getDetailedStatus();
+    return new HealthCheck(healthy ? "UP" : "DOWN", details);
+}
+```
+
+### Topic Auto-Creation Mechanism
+The `KafkaTopicConfig` class defines a `NewTopic` bean that automatically creates the topic on application startup:
+
+```java
+@Bean
+public NewTopic orderEventsTopic(
+    @Value("${kafka.topic.name}") String topicName,
+    @Value("${kafka.topic.partitions:3}") int partitions,
+    @Value("${kafka.topic.replication-factor:1}") short replicationFactor
+) {
+    return TopicBuilder.name(topicName)
+            .partitions(partitions)
+            .replicas(replicationFactor)
+            .build();
+}
+```
+
+**Behavior:**
+- On startup, Spring's `KafkaAdmin` checks if the topic exists
+- If missing, automatically creates it with configured partitions and replication factor
+- If you delete the topic while the app is running, it may be recreated on next health check
+
+**Why This Exists:**
+- Simplifies development setup (no manual topic creation needed)
+- Ensures consistent topic configuration across environments
+- Topic is ready before any messages are published
+
+**To Disable for Testing:**
+Comment out the `@Bean` method in `KafkaTopicConfig.java` if you need to test missing-topic error scenarios.
+
+### Status Detection
+The service maintains three atomic flags:
+- `kafkaConnected`: Broker is reachable and responding
+- `topicReady`: Topic exists and all partitions have leaders
+- `topicNotFound`: Specifically detected that topic doesn't exist (vs. other errors)
+
+### Integration with Health Checks
+- Health endpoints query these cached flags (instant response)
+- No blocking I/O during health check requests
+- Real-time status updates via background monitoring thread
+
+---
+
+## Status Machine (State Validation)
+
+### Overview
+The producer enforces a **state machine** to validate order status transitions before sending messages to Kafka, preventing invalid orders from being published.
+
+**Implementation Location**: `producer/src/main/java/mta/eda/producer/service/util/StatusMachine.java`
+
+### Allowed Status Progression
+
+```
+NEW (0) → CONFIRMED (1) → DISPATCHED (2) → COMPLETED (3)
+                        ↓
+                    CANCELED (4) [terminal - reachable from any state]
+```
+
+### Validation Rules
+
+#### ✅ **Valid Transitions**
+
+1. **Forward Progression**
+   - NEW → CONFIRMED (0 → 1) ✅
+   - CONFIRMED → DISPATCHED (1 → 2) ✅
+   - DISPATCHED → COMPLETED (2 → 3) ✅
+
+2. **Cancellation (Terminal State)**
+   - NEW → CANCELED ✅
+   - CONFIRMED → CANCELED ✅
+   - DISPATCHED → CANCELED ✅
+   - COMPLETED → CANCELED ✅ (even completed can be canceled)
+
+#### ❌ **Invalid Transitions**
+
+1. **Backward Progression**
+   - COMPLETED → DISPATCHED ❌
+   - DISPATCHED → CONFIRMED ❌
+   - CONFIRMED → NEW ❌
+
+2. **Unknown Statuses**
+   - Any unrecognized status ❌
+
+### Exception Handling
+
+On invalid transition, `updateOrder()` throws `InvalidStatusTransitionException`:
+
+```java
+if (!StatusMachine.isValidTransition(existingOrder.status(), request.status())) {
+    throw new InvalidStatusTransitionException(orderId, currentStatus, newStatus);
+}
+```
+
+**Client Response (400 Bad Request):**
+```
+Invalid status transition for order ORD-123: DISPATCHED → NEW. 
+Status can only move forward or to CANCELED.
+```
+
+### Shared Validation with Consumer
+
+**Critical:** Producer and consumer use identical StatusMachine logic:
+
+- **Producer**: Validates BEFORE publishing (prevents invalid messages)
+- **Consumer**: Validates on receipt (defense-in-depth fallback)
+
+**Result:** Guaranteed consistency across entire system
+
+### Only Valid Orders Published
+
+```
+Kafka Topic: orders
+├─ ORD-123, status=NEW (initial)
+├─ ORD-123, status=CONFIRMED (valid transition: 0→1)
+├─ ORD-123, status=DISPATCHED (valid transition: 1→2)
+├─ ORD-456, status=NEW (different order)
+├─ ORD-456, status=CONFIRMED (valid transition: 0→1)
+└─ ORD-123, status=CANCELED (valid from any state)
+
+❌ Invalid transitions NEVER reach Kafka
+```
 
 ---
 

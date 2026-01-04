@@ -307,6 +307,133 @@ resilience4j.circuitbreaker.instances.cartService.permittedNumberOfCallsInHalfOp
 
 ---
 
+### Topic Not Found Error (TOPIC_NOT_FOUND)
+
+**Scenario**: The configured Kafka topic does not exist and auto-topic creation is disabled.
+
+**Detection**:
+- The `KafkaConnectivityService` uses a **two-pass approach** to accurately distinguish between Kafka being down vs. topic not found
+- This detection happens in two places:
+  1. **Health Check**: Background monitoring continuously checks topic existence
+  2. **Producer Send**: When sending a message fails due to missing topic
+
+**Implementation** (Two-Pass Detection):
+```java
+// KafkaConnectivityService.java
+public boolean isTopicNotFoundException(Throwable e) {
+    // FIRST PASS: Rule out connection/timeout issues (these are NOT topic issues)
+    Throwable cause = e;
+    while (cause != null) {
+        // Connection/timeout exceptions indicate Kafka is down, not a topic issue
+        if (cause instanceof java.util.concurrent.TimeoutException ||
+            cause instanceof java.io.IOException ||
+            cause instanceof org.apache.kafka.common.errors.TimeoutException) {
+            String message = cause.getMessage();
+            // If message indicates connection/timeout, this is NOT a topic issue
+            if (message != null && (
+                message.contains("timed out") ||
+                message.contains("Connection refused") ||
+                message.contains("Failed to update metadata") ||
+                message.contains("broker") ||
+                message.contains("not available"))) {
+                return false;  // This is KAFKA_DOWN, not TOPIC_NOT_FOUND
+            }
+        }
+        cause = cause.getCause();
+    }
+    
+    // SECOND PASS: Check for actual topic-not-found exceptions
+    cause = e;
+    while (cause != null) {
+        if (cause instanceof UnknownTopicOrPartitionException) {
+            return true;
+        }
+        // Only check for very specific topic-related error messages
+        String message = cause.getMessage();
+        if (message != null && message.contains("UnknownTopicOrPartition")) {
+            return true;
+        }
+        cause = cause.getCause();
+    }
+    return false;
+}
+```
+
+**Why Two-Pass Approach?**
+- **Problem**: Metadata-related errors can occur when either Kafka is down OR topic doesn't exist
+- **Solution**: First eliminate connection issues, then check for topic-specific problems
+- **Result**: Accurate error type reporting (KAFKA_DOWN vs TOPIC_NOT_FOUND)
+
+**Health Check Integration**:
+The `/health/ready` endpoint will return:
+```json
+{
+  "name": "Producer (Cart Service)",
+  "type": "readiness",
+  "status": "DOWN",
+  "timestamp": "2026-01-03T12:34:56.789Z",
+  "checks": {
+    "service": {
+      "status": "UP",
+      "details": "Cart Service is running and responsive"
+    },
+    "kafka": {
+      "status": "DOWN",
+      "details": "Topic 'orders' does not exist"
+    }
+  }
+}
+```
+HTTP Status: **503 Service Unavailable**
+
+**API Response (during order creation/update)**:
+- **Status**: `500 Internal Server Error`
+- **Error Type**: `TOPIC_NOT_FOUND`
+- **Response Body**:
+```json
+{
+  "timestamp": "2026-01-03T12:34:56.789Z",
+  "error": "Internal Server Error",
+  "message": "The configured Kafka topic does not exist.",
+  "path": "/cart-service/create-order",
+  "details": {
+    "type": "TOPIC_NOT_FOUND",
+    "orderId": "ORD-ABC123",
+    "topicName": "orders"
+  }
+}
+```
+
+**Architectural Reasoning**:
+- This is a **configuration error** that prevents message delivery
+- Returns 500 because it's a server-side misconfiguration, not a temporary outage
+- **Different from**:
+  - `KAFKA_DOWN`: Broker is unreachable (connection/timeout errors) → temporary infrastructure issue
+  - `TOPIC_NOT_FOUND`: Broker is reachable but topic doesn't exist → configuration issue
+  - `CIRCUIT_BREAKER_OPEN`: Temporary protection mechanism → resilience pattern
+- The **two-pass detection** ensures accurate classification:
+  1. First checks if it's a connection issue (KAFKA_DOWN)
+  2. Only then checks if it's a topic issue (TOPIC_NOT_FOUND)
+- Detected by `KafkaConnectivityService` which continuously monitors topic availability
+
+**Resolution**:
+1. Create the missing topic manually:
+   ```bash
+   docker exec kafka kafka-topics --bootstrap-server localhost:9092 \
+     --create --topic orders --partitions 3 --replication-factor 1
+   ```
+2. The `KafkaConnectivityService` will automatically detect the topic once created and update the health status
+
+**Monitoring**:
+- The service continuously monitors topic availability with exponential backoff
+- Health endpoints reflect real-time topic status
+- Check `/cart-service/health/ready` to verify topic is available
+
+**Testing**:
+Use the provided test script: `./scripts/test-missing-topic.sh`
+
+---
+
 ## 2. Resiliency & Consistency Patterns
 
 To ensure the Producer remains a "source of truth," we implement advanced patterns in the `OrderService`.
@@ -336,7 +463,82 @@ Handled at the service level before any message is sent to Kafka.
 
 ---
 
-## 4. Validation & Syntax Errors
+## 5. Kafka Connection Error (KAFKA_DOWN)
+
+**Scenario**: The Kafka broker is unreachable due to network issues, Kafka being stopped, or connection timeouts.
+
+**Detection**:
+- Connection/timeout exceptions: `TimeoutException`, `IOException`, connection refused errors
+- The `KafkaConnectivityService` distinguishes this from `TOPIC_NOT_FOUND` using the two-pass approach
+- Background monitoring continuously attempts reconnection with exponential backoff
+
+**API Response (during order creation/update)**:
+- **Status**: `503 Service Unavailable`
+- **Error Type**: `KAFKA_DOWN`
+- **Response Body**:
+```json
+{
+  "timestamp": "2026-01-04T12:34:56.789Z",
+  "error": "Service Unavailable",
+  "message": "Message broker is unreachable or timed out",
+  "path": "/cart-service/create-order",
+  "details": {
+    "type": "KAFKA_DOWN",
+    "orderId": "ORD-ABC123"
+  }
+}
+```
+
+**Health Check Response**:
+The `/health/ready` endpoint will return:
+```json
+{
+  "name": "Producer (Cart Service)",
+  "type": "readiness",
+  "status": "DOWN",
+  "timestamp": "2026-01-04T12:34:56.789Z",
+  "checks": {
+    "service": {
+      "status": "UP",
+      "details": "Cart Service is running and responsive"
+    },
+    "kafka": {
+      "status": "DOWN",
+      "details": "Cannot connect to Kafka broker at kafka:29092"
+    }
+  }
+}
+```
+HTTP Status: **503 Service Unavailable**
+
+**Architectural Reasoning**:
+- This is a **temporary infrastructure issue**, not a configuration error
+- Returns 503 (Service Unavailable) to indicate transient failure - client should retry
+- **Circuit Breaker Integration**: After repeated failures, circuit opens (CIRCUIT_BREAKER_OPEN)
+- **Auto-Recovery**: Background monitoring continuously retries with exponential backoff
+- Once Kafka is restored, service automatically recovers without restart
+
+**Resolution**:
+1. Check Kafka service status:
+   ```bash
+   docker-compose ps kafka
+   docker-compose logs kafka
+   ```
+2. Restart Kafka if needed:
+   ```bash
+   docker-compose up -d kafka
+   ```
+3. The `KafkaConnectivityService` will automatically detect when Kafka is back and update health status
+4. Circuit breaker will close once successful sends resume
+
+**Monitoring**:
+- Check `/cart-service/health/ready` to verify Kafka connectivity
+- Watch for circuit breaker state (OPEN → HALF_OPEN → CLOSED)
+- Background monitoring provides automatic recovery
+
+---
+
+## 6. Validation & Syntax Errors
 
 Represent malformed data from the client.
 
@@ -346,7 +548,7 @@ Represent malformed data from the client.
 
 ---
 
-## 5. System Health & Proactivity
+## 7. System Health & Proactivity
 
 The system includes proactive monitoring to prevent failures before they occur.
 
@@ -373,16 +575,31 @@ The system includes proactive monitoring to prevent failures before they occur.
 }
 ```
 
-### 500 Internal Server Error (Kafka Timeout/Down)
+### 503 Service Unavailable (Kafka Down)
 ```json
 {
-  "timestamp": "2026-01-01T12:00:00.000Z",
-  "error": "Internal Server Error",
-  "message": "The server encountered an error while publishing the order event.",
+  "timestamp": "2026-01-04T12:00:00.000Z",
+  "error": "Service Unavailable",
+  "message": "Message broker is unreachable or timed out",
   "path": "/cart-service/create-order",
   "details": {
     "type": "KAFKA_DOWN",
     "orderId": "ORD-000A"
+  }
+}
+```
+
+### 500 Internal Server Error (Topic Not Found)
+```json
+{
+  "timestamp": "2026-01-01T12:00:00.000Z",
+  "error": "Internal Server Error",
+  "message": "The configured Kafka topic does not exist and auto-creation is disabled.",
+  "path": "/cart-service/create-order",
+  "details": {
+    "type": "TOPIC_NOT_FOUND",
+    "orderId": "ORD-000A",
+    "topicName": "orders"
   }
 }
 ```

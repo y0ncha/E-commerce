@@ -1,92 +1,37 @@
 package mta.eda.producer.service.general;
 
 import mta.eda.producer.model.response.HealthCheck;
-import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.DescribeTopicsResult;
-import org.apache.kafka.clients.admin.TopicDescription;
-import org.apache.kafka.common.TopicPartitionInfo;
-import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import mta.eda.producer.service.kafka.KafkaConnectivityService;
 import org.springframework.stereotype.Service;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 
 /**
  * HealthService
- * Performs readiness checks against Kafka.
- * Designed to be safe for HTTP endpoints (short timeouts + caching).
+ * Provides health checks using pre-cached status from KafkaConnectivityService.
+ * No blocking I/O - status is updated asynchronously in background.
  */
 @Service
 public class HealthService {
 
-    private static final Logger logger = LoggerFactory.getLogger(HealthService.class);
+    private final KafkaConnectivityService kafkaConnectivityService;
 
-    @Value("${spring.kafka.bootstrap-servers}")
-    private String bootstrapServers;
-
-    @Value("${kafka.topic.name}")
-    private String topicName;
-
-    @Value("${producer.health.timeout.ms:3000}")
-    private long healthTimeoutMs;
-
-    @Value("${producer.health.cache.ttl.ms:2000}")
-    private long cacheTtlMs;
-
-    private final Object lock = new Object();
-    private volatile long lastCheckedAtMs = 0;
-    private volatile KafkaStatus lastStatus = new KafkaStatus(false, "Not checked yet");
-
-    public record KafkaStatus(boolean healthy, String reason) {}
-
-    /**
-     * Readiness check: Kafka reachable AND topic exists.
-     * Cached to avoid spamming Kafka and logs.
-     */
-    public KafkaStatus readiness() {
-        long now = System.currentTimeMillis();
-        if (now - lastCheckedAtMs <= cacheTtlMs) {
-            return lastStatus;
-        }
-
-        synchronized (lock) {
-            now = System.currentTimeMillis();
-            if (now - lastCheckedAtMs <= cacheTtlMs) {
-                return lastStatus;
-            }
-
-            KafkaStatus status = checkOnce();
-            lastStatus = status;
-            lastCheckedAtMs = now;
-
-            if (!status.healthy()) {
-                logger.warn("Kafka readiness DOWN - topic={} - reason={}", topicName, status.reason());
-            } else {
-                logger.debug("Kafka readiness UP - topic={}", topicName);
-            }
-
-            return status;
-        }
+    public HealthService(KafkaConnectivityService kafkaConnectivityService) {
+        this.kafkaConnectivityService = kafkaConnectivityService;
     }
 
     /**
-     * Get detailed Kafka status for health response.
-     * Returns status and details suitable for HealthResponse.
+     * Get Kafka status with fresh ping check (non-blocking, single attempt).
+     * Pings Kafka to verify current status and updates cache if changed.
+     * Uses cached status if ping confirms no change.
      */
     public HealthCheck getKafkaStatus() {
-        KafkaStatus status = readiness();
-        String details = status.healthy()
-                ? "reachable; topic '" + topicName + "' exists"
-                : status.reason();
+        // Ping Kafka to get fresh status (updates cache if changed)
+        kafkaConnectivityService.pingKafka();
+
+        // Return current status (potentially just updated by ping)
+        boolean healthy = kafkaConnectivityService.isHealthy();
+        String details = kafkaConnectivityService.getDetailedStatus();
         return new HealthCheck(
-                status.healthy() ? "UP" : "DOWN",
+                healthy ? "UP" : "DOWN",
                 details
         );
     }
@@ -98,65 +43,7 @@ public class HealthService {
     public HealthCheck getServiceStatus() {
         return new HealthCheck(
                 "UP",
-                "web server started"
+                "Cart Service is running and responsive"
         );
-    }
-
-    private KafkaStatus checkOnce() {
-        Map<String, Object> props = new HashMap<>();
-        String servers = (bootstrapServers != null) ? bootstrapServers : "localhost:9092";
-        
-        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, servers);
-        props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, (int) healthTimeoutMs);
-        props.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, (int) healthTimeoutMs);
-        props.put(AdminClientConfig.CLIENT_ID_CONFIG, "health-check-client");
-
-        try (AdminClient admin = AdminClient.create(props)) {
-
-            // 1) Verify broker is reachable
-            try {
-                var brokers = admin.describeCluster()
-                        .nodes()
-                        .get(healthTimeoutMs, TimeUnit.MILLISECONDS);
-
-                if (brokers.isEmpty()) {
-                    return new KafkaStatus(false, "BROKER_UNREACHABLE: No active brokers found at " + servers);
-                }
-            } catch (java.util.concurrent.TimeoutException te) {
-                return new KafkaStatus(false, String.format("CONNECTION_TIMEOUT: Failed to reach message broker within %dms.", healthTimeoutMs));
-            } catch (ExecutionException ee) {
-                return new KafkaStatus(false, "CONNECTION_ERROR: Could not establish connection to the broker.");
-            }
-
-            // 2) Verify topic exists
-            try {
-                DescribeTopicsResult dtr = admin.describeTopics(List.of(topicName));
-                TopicDescription topicDesc = dtr.topicNameValues()
-                        .get(topicName)
-                        .get(healthTimeoutMs, TimeUnit.MILLISECONDS);
-
-                // 3) Verify topic has at least one partition with a leader
-                for (TopicPartitionInfo p : topicDesc.partitions()) {
-                    if (p.leader() == null) {
-                        return new KafkaStatus(false, String.format("TOPIC_UNAVAILABLE: Topic '%s' partition %d has no leader.", topicName, p.partition()));
-                    }
-                }
-
-                return new KafkaStatus(true, "OK");
-
-            } catch (java.util.concurrent.TimeoutException te) {
-                return new KafkaStatus(false, String.format("METADATA_TIMEOUT: Timed out fetching metadata for topic '%s'.", topicName));
-            } catch (ExecutionException ee) {
-                Throwable cause = ee.getCause();
-                if (cause instanceof UnknownTopicOrPartitionException) {
-                    return new KafkaStatus(false, "TOPIC_NOT_FOUND: The required topic '" + topicName + "' does not exist.");
-                }
-                return new KafkaStatus(false, "METADATA_ERROR: Could not retrieve topic information.");
-            }
-
-        } catch (Exception e) {
-            logger.error("Kafka health check initialization failed", e);
-            return new KafkaStatus(false, "KAFKA_INITIALIZATION_ERROR: Could not initialize connection to the message broker.");
-        }
     }
 }

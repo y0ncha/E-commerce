@@ -1,0 +1,1329 @@
+{
+  "info": {
+    "_postman_id": "error-cases-collection-001",
+    "name": "Error Cases",
+    "description": "Negative tests covering: duplicate requests, invalid states, invalid transitions, empty/invalid fields, and boundary conditions",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Setup - Create Base Order",
+      "item": [
+        {
+          "name": "Create Order for Error Testing",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "setup-generate-id",
+                "exec": [
+                  "function generateHexId(length) {",
+                  "  let result = '';",
+                  "  const characters = '0123456789ABCDEF';",
+                  "  for (let i = 0; i < length; i++) {",
+                  "    result += characters.charAt(Math.floor(Math.random() * characters.length));",
+                  "  }",
+                  "  return result;",
+                  "}",
+                  "pm.environment.set('test_order_id', generateHexId(16));",
+                  "pm.environment.set('duplicate_order_id', generateHexId(16));",
+                  "pm.environment.set('skip_order_id', generateHexId(16));"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "setup-extract-id",
+                "exec": [
+                  "pm.test('Order created successfully', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const jsonData = pm.response.json();",
+                  "  pm.environment.set('stored_order_id', jsonData.order.orderId);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "id": "setup-order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{test_order_id}}\",\n  \"numItems\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "id": "9d36052f-8809-46f6-97d8-824e0c5f7280"
+    },
+    {
+      "name": "1. Duplicate Requests",
+      "item": [
+        {
+          "name": "1.1 - Duplicate Order Creation (Same OrderID)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "duplicate-creation-test",
+                "exec": [
+                  "pm.test('Duplicate order creation should be rejected (409 or 400)', () => {",
+                  "  const status = pm.response.code;",
+                  "  // Expect conflict or bad request",
+                  "  pm.expect([400, 409]).to.include(status);",
+                  "});",
+                  "",
+                  "pm.test('Response should contain error message', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  pm.expect(jsonData).to.have.property('message').or.have.property('error');",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "duplicate-order-creation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{test_order_id}}\",\n  \"numItems\": 3\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "Attempt to create an order with the same orderId that already exists"
+          },
+          "response": []
+        },
+        {
+          "name": "1.2 - Duplicate Update Request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "duplicate-update-test",
+                "exec": [
+                  "pm.test('First update should succeed (200)', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "// Store the order ID for the second duplicate update",
+                  "pm.environment.set('updated_order_id', pm.environment.get('test_order_id'));"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "8aee35f2-2072-4652-ab94-63696e5bfc86",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "id": "duplicate-update-first",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{test_order_id}}\",\n  \"status\": \"confirmed\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/update-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "update-order"
+              ]
+            },
+            "description": "First update - should succeed"
+          },
+          "response": []
+        },
+        {
+          "name": "1.3 - Idempotent Update (Same Request Again)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "idempotent-update-test",
+                "exec": [
+                  "pm.test('Idempotent update should succeed or handle gracefully', () => {",
+                  "  const status = pm.response.code;",
+                  "  // Should be idempotent - either 200 (accepted) or 409 (conflict)",
+                  "  pm.expect([200, 409]).to.include(status);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "e7e248ad-10e0-4c72-ac1a-f421bc2fb10e",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "id": "idempotent-update",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{test_order_id}}\",\n  \"status\": \"confirmed\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/update-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "update-order"
+              ]
+            },
+            "description": "Same update request sent twice - should be idempotent"
+          },
+          "response": []
+        }
+      ],
+      "id": "8ecbca41-aa24-405a-a604-296907bcdb4c"
+    },
+    {
+      "name": "2. Invalid State Transitions",
+      "item": [
+        {
+          "name": "2.1 - Backward State Transition (confirmed → new)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "backward-transition-test",
+                "exec": [
+                  "pm.test('Backward state transition should be rejected (400 or 409)', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([400, 409]).to.include(status);",
+                  "});",
+                  "",
+                  "pm.test('Response should contain error message about invalid transition', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  const message = jsonData.message || jsonData.error || '';",
+                  "  pm.expect(message.toLowerCase()).to.include('transition').or.include('invalid').or.include('state');",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "backward-state-transition",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{updated_order_id}}\",\n  \"status\": \"new\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/update-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "update-order"
+              ]
+            },
+            "description": "Attempt to transition from 'confirmed' back to 'new' - invalid backward transition"
+          },
+          "response": []
+        },
+        {
+          "name": "2.2 - Invalid State Value",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "invalid-state-test",
+                "exec": [
+                  "pm.test('Invalid state should be rejected (400 or 422)', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([400, 422]).to.include(status);",
+                  "});",
+                  "",
+                  "pm.test('Response should contain error about invalid state', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  const message = jsonData.message || jsonData.error || '';",
+                  "  pm.expect(message.toLowerCase()).to.include('invalid').or.include('state').or.include('unknown');",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "invalid-state-value",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{test_order_id}}\",\n  \"status\": \"INVALID_STATE_XYZ\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/update-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "update-order"
+              ]
+            },
+            "description": "Attempt to set order to an invalid/unknown state"
+          },
+          "response": []
+        },
+        {
+          "name": "2.3 - Skip Valid State Progression (new → dispatched directly)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "skip-state-setup",
+                "exec": [
+                  "// function generateHexId(length) {ß",
+                  "//   let result = '';",
+                  "//   const characters = '0123456789ABCDEF';",
+                  "//   for (let i = 0; i < length; i++) {",
+                  "//     result += characters.charAt(Math.floor(Math.random() * characters.length));",
+                  "//   }",
+                  "//   return result;",
+                  "// }",
+                  "// pm.environment.set('skip_order_id', generateHexId(16));"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "skip-state-test",
+                "exec": [
+                  "pm.test('Skipping state progression may be rejected (400 or 409) or allowed depending on implementation', () => {",
+                  "  const status = pm.response.code;",
+                  "  // Document whether system allows or rejects skipping states",
+                  "  pm.environment.set('skip_state_allowed', status === 200);",
+                  "  pm.console.log('Skip state transition result: ' + status);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "id": "skip-state-transition",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{test_order_id}}\",\n  \"status\": \"completed\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/update-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "update-order"
+              ]
+            },
+            "description": "Attempt to skip valid state progression (new → dispatched, skipping confirmed)"
+          },
+          "response": []
+        }
+      ],
+      "id": "8b2ef71b-1c08-46db-a384-370424b07ec7"
+    },
+    {
+      "name": "3. Empty and Invalid Fields",
+      "item": [
+        {
+          "name": "3.1 - Missing OrderID in Create Request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "missing-orderid-test",
+                "exec": [
+                  "pm.test('Missing orderId should be rejected (400)', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Response should indicate missing field', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  const message = jsonData.message || jsonData.error || '';",
+                  "  pm.expect(message.toLowerCase()).to.include('orderid').or.include('required').or.include('missing');",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "missing-orderid",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"numItems\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "Create order without orderId field"
+          },
+          "response": []
+        },
+        {
+          "name": "3.2 - Empty OrderID String",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "empty-orderid-test",
+                "exec": [
+                  "pm.test('Empty orderId should be rejected (400)', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Response should indicate invalid orderId', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  const message = jsonData.message || jsonData.error || '';",
+                  "  pm.expect(message.toLowerCase()).to.include('orderid').or.include('empty').or.include('invalid');",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "empty-orderid-value",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"\",\n  \"numItems\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "Create order with empty orderId value"
+          },
+          "response": []
+        },
+        {
+          "name": "3.3 - Missing NumItems in Create Request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "missing-numitems-test",
+                "exec": [
+                  "pm.test('Missing numItems should be rejected or use default (400 or 201)', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([400, 201]).to.include(status);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "missing-numitems",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"TEST_NO_ITEMS_001\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "Create order without numItems field"
+          },
+          "response": []
+        },
+        {
+          "name": "3.4 - Negative NumItems",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "negative-numitems-test",
+                "exec": [
+                  "pm.test('Negative numItems should be rejected (400)', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Response should indicate invalid numItems', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  const message = jsonData.message || jsonData.error || '';",
+                  "  pm.expect(message.toLowerCase()).to.include('numitems').or.include('invalid').or.include('positive');",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "negative-numitems",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"TEST_NEG_ITEMS_001\",\n  \"numItems\": -5\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "Create order with negative number of items"
+          },
+          "response": []
+        },
+        {
+          "name": "3.5 - Zero NumItems",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "zero-numitems-test",
+                "exec": [
+                  "pm.test('Zero numItems should be rejected (400) or minimum allowed', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([400, 201]).to.include(status);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "zero-numitems",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"TEST_ZERO_ITEMS_001\",\n  \"numItems\": 0\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "Create order with zero items"
+          },
+          "response": []
+        },
+        {
+          "name": "3.6 - Missing Status in Update Request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "missing-status-test",
+                "exec": [
+                  "pm.test('Missing status should be rejected (400)', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Response should indicate missing status field', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  const message = jsonData.message || jsonData.error || '';",
+                  "  pm.expect(message.toLowerCase()).to.include('status').or.include('required').or.include('missing');",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "missing-status",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{test_order_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/update-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "update-order"
+              ]
+            },
+            "description": "Update order without status field"
+          },
+          "response": []
+        },
+        {
+          "name": "3.7 - Empty Status String",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "empty-status-test",
+                "exec": [
+                  "pm.test('Empty status should be rejected (400)', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Response should indicate invalid status', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  const message = jsonData.message || jsonData.error || '';",
+                  "  pm.expect(message.toLowerCase()).to.include('status').or.include('empty').or.include('invalid');",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "empty-status-value",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{test_order_id}}\",\n  \"status\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/update-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "update-order"
+              ]
+            },
+            "description": "Update order with empty status value"
+          },
+          "response": []
+        }
+      ],
+      "id": "6ef7a84b-f11c-49a2-90a5-a7f1669a01d8"
+    },
+    {
+      "name": "4. Non-Existent and Invalid Resources",
+      "item": [
+        {
+          "name": "4.1 - Query Non-Existent Order (Consumer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "nonexistent-order-test",
+                "exec": [
+                  "pm.test('Query non-existent order should return 404 or empty result', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([404, 200]).to.include(status);",
+                  "});",
+                  "",
+                  "pm.test('Response should be meaningful', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  // Either contains error or empty object/null",
+                  "  pm.expect(jsonData).to.exist;",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "nonexistent-order",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url_consumer}}/order-details?orderId=NONEXISTENT_ORDER_999",
+              "host": [
+                "{{base_url_consumer}}"
+              ],
+              "path": [
+                "order-details"
+              ],
+              "query": [
+                {
+                  "key": "orderId",
+                  "value": "NONEXISTENT_ORDER_999"
+                }
+              ]
+            },
+            "description": "Attempt to retrieve order that does not exist"
+          },
+          "response": []
+        },
+        {
+          "name": "4.2 - Update Non-Existent Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "update-nonexistent-test",
+                "exec": [
+                  "pm.test('Update non-existent order should return 404 or 400', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([400, 404, 409]).to.include(status);",
+                  "});",
+                  "",
+                  "pm.test('Response should contain error message', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  const message = jsonData.message || jsonData.error || '';",
+                  "  pm.expect(message.toLowerCase()).to.include('not found').or.include('does not exist').or.include('invalid');",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "update-nonexistent-order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"NONEXISTENT_ORDER_888\",\n  \"status\": \"confirmed\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/update-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "update-order"
+              ]
+            },
+            "description": "Attempt to update an order that does not exist"
+          },
+          "response": []
+        }
+      ],
+      "id": "95d4897b-7cf6-4e90-b3c7-19faabb2e5a6"
+    },
+    {
+      "name": "5. Invalid Input Formats",
+      "item": [
+        {
+          "name": "5.1 - Invalid JSON in Request Body",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "invalid-json-test",
+                "exec": [
+                  "pm.test('Invalid JSON should be rejected (400)', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "invalid-json",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{invalid json here]"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "Send malformed JSON body"
+          },
+          "response": []
+        },
+        {
+          "name": "5.2 - NumItems as String Instead of Number",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "numitems-string-test",
+                "exec": [
+                  "pm.test('Non-numeric numItems should be rejected or coerced (400 or 201)', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([400, 201, 422]).to.include(status);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "numitems-string",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"TEST_STRING_ITEMS_001\",\n  \"numItems\": \"five\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "NumItems passed as string instead of number"
+          },
+          "response": []
+        },
+        {
+          "name": "5.3 - Extra Unknown Fields in Request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "extra-fields-test",
+                "exec": [
+                  "pm.test('Extra unknown fields should be ignored or accepted (200 or 201)', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([200, 201, 400]).to.include(status);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "extra-unknown-fields",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"TEST_EXTRA_FIELDS_001\",\n  \"numItems\": 3,\n  \"unknownField1\": \"value1\",\n  \"unknownField2\": 123,\n  \"unknownField3\": {\"nested\": \"object\"}\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "Request with extra unknown fields not defined in API spec"
+          },
+          "response": []
+        },
+        {
+          "name": "5.4 - OrderID with Special Characters",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "special-chars-test",
+                "exec": [
+                  "pm.test('Special characters in orderId should be handled (200, 201, or 400)', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([200, 201, 400]).to.include(status);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "special-chars-orderid",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"TEST@#$%^&*()\",\n  \"numItems\": 3\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "OrderID with special characters"
+          },
+          "response": []
+        }
+      ],
+      "id": "9e1b9f7d-6d7b-4eaa-9837-ff150fab39ab"
+    },
+    {
+      "name": "6. Boundary Conditions",
+      "item": [
+        {
+          "name": "6.1 - Maximum NumItems (Boundary)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "max-numitems-test",
+                "exec": [
+                  "pm.test('Maximum numItems should be accepted or rejected based on limits (200, 201, or 400)', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([200, 201, 400]).to.include(status);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "max-numitems",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"TEST_MAX_ITEMS_001\",\n  \"numItems\": 999999\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "Order with maximum/very large number of items"
+          },
+          "response": []
+        }
+      ],
+      "id": "3ad3f5fd-28cc-4a15-805e-5d48ec961f79"
+    },
+    {
+      "name": "7. Null and Type Mismatches",
+      "item": [
+        {
+          "name": "7.1 - OrderID as Null",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "null-orderid-test",
+                "exec": [
+                  "pm.test('Null orderId should be rejected (400)', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Response should indicate invalid orderId', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  const message = jsonData.message || jsonData.error || '';",
+                  "  pm.expect(message.toLowerCase()).to.include('orderid').or.include('null').or.include('invalid');",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "null-orderid",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": null,\n  \"numItems\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/create-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "create-order"
+              ]
+            },
+            "description": "OrderID set to null"
+          },
+          "response": []
+        },
+        {
+          "name": "7.2 - Status as Null",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "null-status-test",
+                "exec": [
+                  "pm.test('Null status should be rejected (400)', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Response should indicate invalid status', () => {",
+                  "  const jsonData = pm.response.json();",
+                  "  const message = jsonData.message || jsonData.error || '';",
+                  "  pm.expect(message.toLowerCase()).to.include('status').or.include('null').or.include('invalid');",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "null-status",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{test_order_id}}\",\n  \"status\": null\n}"
+            },
+            "url": {
+              "raw": "{{base_url_producer}}/update-order",
+              "host": [
+                "{{base_url_producer}}"
+              ],
+              "path": [
+                "update-order"
+              ]
+            },
+            "description": "Status set to null"
+          },
+          "response": []
+        }
+      ],
+      "id": "fa21334d-b6ba-4e25-9643-18549259d469"
+    },
+    {
+      "name": "8. Consumer Query Error Cases",
+      "item": [
+        {
+          "name": "8.1 - Missing OrderID Query Parameter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "missing-query-param-test",
+                "exec": [
+                  "pm.test('Missing orderId query parameter should return 400 or 404', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([400, 404]).to.include(status);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "missing-query-param",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url_consumer}}/order-details",
+              "host": [
+                "{{base_url_consumer}}"
+              ],
+              "path": [
+                "order-details"
+              ]
+            },
+            "description": "GET order-details without orderId query parameter"
+          },
+          "response": []
+        },
+        {
+          "name": "8.2 - Empty OrderID Query Parameter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "empty-query-param-test",
+                "exec": [
+                  "pm.test('Empty orderId query parameter should return 400 or 404', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([400, 404]).to.include(status);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "empty-query-param",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url_consumer}}/order-details?orderId=",
+              "host": [
+                "{{base_url_consumer}}"
+              ],
+              "path": [
+                "order-details"
+              ],
+              "query": [
+                {
+                  "key": "orderId",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "GET order-details with empty orderId query parameter"
+          },
+          "response": []
+        },
+        {
+          "name": "8.3 - Empty Topic Name Parameter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "empty-topic-test",
+                "exec": [
+                  "pm.test('Empty topic name should return 400 or 404', () => {",
+                  "  const status = pm.response.code;",
+                  "  pm.expect([400, 404]).to.include(status);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {}
+              }
+            }
+          ],
+          "id": "empty-topic",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url_consumer}}/getAllOrdersFromTopic?topicName=",
+              "host": [
+                "{{base_url_consumer}}"
+              ],
+              "path": [
+                "getAllOrdersFromTopic"
+              ],
+              "query": [
+                {
+                  "key": "topicName",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Query getAllOrdersFromTopic with empty topic name"
+          },
+          "response": []
+        }
+      ],
+      "id": "a25e707d-ee8e-4e5e-92fe-b03eed802aa9"
+    }
+  ]
+}

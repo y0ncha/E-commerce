@@ -405,20 +405,15 @@
             "id": "894cb4df-00e4-43a6-9b54-d565fab06690",
             "exec": [
               "// Handle both success and 404 responses gracefully",
-              "pm.test(\"Response is valid (200 or 404)\", () => {",
-              "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+              "pm.test(\"Response is valid (200)\", () => {",
+              "    pm.expect(pm.response.code).eql(200);",
               "});",
               "",
               "pm.test(\"Order details are correct when found\", () => {",
-              "    if (pm.response.code === 200) {",
-              "        const jsonData = pm.response.json();",
-              "        // shippingCost is a string formatted as \"%.2f\"",
-              "        pm.expect(parseFloat(jsonData.shippingCost)).to.be.above(0);",
-              "        pm.expect(jsonData.status).to.be.oneOf(['new', 'CREATED', 'CONFIRMED']);",
-              "    } else if (pm.response.code === 404) {",
-              "        // Order not yet propagated via Kafka - this is acceptable",
-              "        console.log('Order not found - Kafka propagation may still be in progress');",
-              "    }",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.shippingCost).to.be.a('number');",
+              "    pm.expect(jsonData.shippingCost).to.be.above(0);",
+              "    pm.expect(jsonData.status).eql('new');",
               "});"
             ],
             "type": "text/javascript",
@@ -476,7 +471,7 @@
       "response": []
     },
     {
-      "name": "Update Order Status (Producer)",
+      "name": "Update Order Status (confirmed)",
       "event": [
         {
           "listen": "test",
@@ -514,7 +509,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"status\": \"dispatched\"\n}"
+          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"status\": \"confirmed\"\n}"
         },
         "url": {
           "raw": "{{base_url_producer}}/update-order",
@@ -537,18 +532,13 @@
             "id": "bec7852a-10cd-4dac-938f-9d4b993a9d09",
             "exec": [
               "// Handle both success and 404 responses gracefully",
-              "pm.test(\"Response is valid (200 or 404)\", () => {",
-              "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+              "pm.test(\"Response is valid (200)\", () => {",
+              "    pm.expect(pm.response.code).eql(200);",
               "});",
               "",
               "pm.test(\"Consumer reflected dispatched status when found\", () => {",
-              "    if (pm.response.code === 200) {",
-              "        const jsonData = pm.response.json();",
-              "        pm.expect(jsonData.status).to.eql(\"dispatched\");",
-              "    } else if (pm.response.code === 404) {",
-              "        // Order not yet propagated via Kafka - this is acceptable",
-              "        console.log('Order not found - Kafka propagation may still be in progress');",
-              "    }",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.status).to.eql(\"confirmed\");",
               "});"
             ],
             "type": "text/javascript",
@@ -691,6 +681,59 @@
       "response": []
     },
     {
+      "name": "Update Order Status (canceled)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "3a75ac29-a57c-493b-a8bb-2e79eca56762",
+            "exec": [
+              "pm.test(\"Update accepted by Producer\", () => pm.response.to.have.status(200));"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "86b496ad-346a-4fde-98b7-84cd06c05f39",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "id": "52a0c48f-5cdf-48c8-b721-20fb5fd77273",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"orderId\": \"{{raw_id}}\",\n    \"status\": \"canceled\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url_producer}}/update-order",
+          "host": [
+            "{{base_url_producer}}"
+          ],
+          "path": [
+            "update-order"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
       "name": "Get Order Details",
       "event": [
         {
@@ -699,64 +742,52 @@
             "id": "5cbd0c1a-0ec1-46f9-922d-c663c8b0699d",
             "exec": [
               "// Handle both success and 404 responses gracefully",
-              "pm.test(\"Response is valid (200 or 404)\", () => {",
-              "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+              "pm.test(\"Response is valid (200)\", () => {",
+              "    pm.expect(pm.response.code).eql(200);",
               "});",
               "",
-              "// Only run detailed tests when order is found",
-              "if (pm.response.code === 200) {",
-              "    // Test: Response contains all required order fields",
-              "    pm.test(\"Response has all order fields\", () => {",
-              "        const jsonData = pm.response.json();",
-              "        pm.expect(jsonData).to.have.property('orderId');",
-              "        pm.expect(jsonData).to.have.property('customerId');",
-              "        pm.expect(jsonData).to.have.property('orderDate');",
-              "        pm.expect(jsonData).to.have.property('status');",
-              "        pm.expect(jsonData).to.have.property('items');",
-              "        pm.expect(jsonData).to.have.property('totalAmount');",
-              "        pm.expect(jsonData).to.have.property('currency');",
-              "        pm.expect(jsonData).to.have.property('shippingCost');",
-              "    });",
+              "// Test: Response contains all required order fields",
+              "pm.test(\"Response has all order fields\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('orderId');",
+              "    pm.expect(jsonData).to.have.property('customerId');",
+              "    pm.expect(jsonData).to.have.property('orderDate');",
+              "    pm.expect(jsonData).to.have.property('status');",
+              "    pm.expect(jsonData).to.have.property('items');",
+              "    pm.expect(jsonData).to.have.property('totalAmount');",
+              "    pm.expect(jsonData).to.have.property('currency');",
+              "    pm.expect(jsonData).to.have.property('shippingCost');",
+              "});",
               "",
               "    // Test: Order ID matches request",
-              "    pm.test(\"Order ID matches request parameter\", () => {",
-              "        const jsonData = pm.response.json();",
-              "        const requestedId = pm.request.url.query.toObject().orderId;",
-              "        pm.expect(jsonData.orderId).to.include(requestedId);",
-              "    });",
+              "pm.test(\"Order ID matches request parameter\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    const requestedId = pm.request.url.query.toObject().orderId;",
+              "    pm.expect(jsonData.orderId).to.include(requestedId);",
+              "});",
               "",
-              "    // // Test: Status is valid (one of expected statuses)",
-              "    // pm.test(\"Order status is valid\", () => {",
-              "    //     const jsonData = pm.response.json();",
-              "    //     const validStatuses = ['new', 'CREATED', 'CONFIRMED', 'DISPATCHED', 'DELIVERED', 'shipped'];",
-              "    //     pm.expect(validStatuses).to.include(jsonData.status);",
-              "    // });",
+              "// Test: Shipping cost is numeric",
+              "pm.test(\"Shipping cost is numeric\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    const shippingCost = jsonData.shippingCost;",
+              "    pm.expect(shippingCost).to.be.a('number');",
+              "    pm.expect(shippingCost).to.be.at.least(0);",
+              "});",
               "",
-              "    // Test: Shipping cost is numeric",
-              "    pm.test(\"Shipping cost is numeric\", () => {",
-              "        const jsonData = pm.response.json();",
-              "        const shippingCost = parseFloat(jsonData.shippingCost);",
-              "        pm.expect(shippingCost).to.be.a('number');",
-              "        pm.expect(shippingCost).to.be.at.least(0);",
-              "    });",
-              "",
-              "    // Test: Items array is not empty",
-              "    pm.test(\"Order has items\", () => {",
-              "        const jsonData = pm.response.json();",
-              "        pm.expect(jsonData.items).to.be.an('array');",
-              "        pm.expect(jsonData.items.length).to.be.greaterThan(0);",
-              "    });",
+              "// Test: Items array is not empty",
+              "pm.test(\"Order has items\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.items).to.be.an('array');",
+              "    pm.expect(jsonData.items.length).to.be.greaterThan(0);",
+              "});",
               "",
               "    // Test: Total amount matches currency",
-              "    pm.test(\"Order has total amount and currency\", () => {",
-              "        const jsonData = pm.response.json();",
-              "        pm.expect(jsonData.totalAmount).to.be.a('number');",
-              "        pm.expect(jsonData.totalAmount).to.be.greaterThan(0);",
-              "        pm.expect(jsonData.currency).to.equal('USD');",
-              "    });",
-              "} else {",
-              "    console.log('Order not found (404) - Kafka propagation may still be in progress');",
-              "}"
+              "pm.test(\"Order has total amount and currency\", () => {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.totalAmount).to.be.a('number');",
+              "    pm.expect(jsonData.totalAmount).to.be.greaterThan(0);",
+              "    pm.expect(jsonData.currency).to.equal('USD');",
+              "});"
             ],
             "type": "text/javascript",
             "packages": {},
@@ -804,19 +835,56 @@
       "response": []
     },
     {
-      "name": "Debug",
+      "name": "Debug - All consumed messages by now",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "206638c5-931e-40d9-9126-28b54373ea02",
+            "exec": [
+              "const response = pm.response.json();",
+              "const messages = response.messages; // Array of messages with time, orderId, and status",
+              "const orderId = pm.environment.get(\"order_id\");",
+              "",
+              "pm.test(\"Check if the response status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"Check if the response body contains the order_id\", function () {",
+              "    const orderIds = messages.map(m => m.orderId);",
+              "    pm.expect(orderIds).to.include(orderId);",
+              "});",
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "id": "35965685-6a87-4ef7-ba5f-62ffe968a909",
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
       "id": "596032c2-aa36-4f05-afeb-2e92d52f2164",
       "request": {
         "method": "GET",
         "header": [],
         "url": {
-          "raw": "{{base_url_consumer}}/debug/all-orders",
+          "raw": "{{base_url_consumer}}/debug/all-messages",
           "host": [
             "{{base_url_consumer}}"
           ],
           "path": [
             "debug",
-            "all-orders"
+            "all-messages"
           ]
         }
       },

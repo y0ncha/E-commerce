@@ -165,7 +165,10 @@ public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerCont
     
     factory.setConsumerFactory(consumerFactory);
     factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
-    factory.setAutoStartup(false);  // Allows Consumer to run without Kafka
+    
+    // UPDATED: Enable auto-startup for immediate consumption
+    // Spring manages the lifecycle, while KafkaConnectivityService monitors health
+    factory.setAutoStartup(true);
     
     return factory;
 }
@@ -442,14 +445,25 @@ The `HealthService.getServiceStatus()` method checks if the Order Service is res
 - **Used By**: Both liveness and readiness probes
 
 ### Kafka Broker Health Check
-The `HealthService.getKafkaStatus()` method verifies Kafka broker connectivity.
+The `HealthService.getKafkaStatus()` method verifies Kafka broker connectivity through `KafkaConnectivityService`.
 
-- **Implementation**: Attempts to access `KafkaTemplate` configured with Kafka broker
-- **Response on Success**: `HealthCheck("UP", "Kafka broker is accessible")`
-- **Response on Failure**: `HealthCheck("DOWN", "Kafka broker is unavailable: ...")`
+- **Implementation**: 
+  - **Fresh Ping**: Calls `pingKafka()` on every health check for current status
+  - **No Retries**: Single attempt with 3-second timeout
+  - **Cache Update**: Updates cached state if Kafka status changed
+  - Returns the most current status (not stale cached data)
+- **Response States**:
+  - `HealthCheck("UP", "Connected and consuming from topics")` - Fully operational
+  - `HealthCheck("DEGRADED", "Connected to broker but topic 'orders' not ready")` - Temporary issue
+  - `HealthCheck("DOWN", "Cannot connect to Kafka broker at kafka:29092")` - Connection failed
 - **Bootstrap Server**: Retrieved from `spring.kafka.bootstrap-servers` (kafka:29092 in Docker)
 - **Used By**: Readiness probe only
-- **Impact**: If DOWN, readiness probe returns 503 Service Unavailable
+- **Impact**: 
+  - **Kafka UP or DEGRADED**: Readiness returns HTTP 200 OK (service ready)
+  - **Kafka DOWN**: Readiness returns **HTTP 503 Service Unavailable** (service NOT ready)
+- **Rationale**: Consumer cannot function without Kafka, so Kafka DOWN = service not ready
+- **Orchestration**: Kubernetes/Docker will stop routing traffic to unhealthy consumer instances
+- **Fresh Status Guarantee**: Ping mechanism ensures orchestrators always get current Kafka state
 
 ### Local State Store Health Check
 The `HealthService.getLocalStateStatus()` method verifies the in-memory order state store.
@@ -589,7 +603,7 @@ docker compose up
 ```
 - **Purpose**: Testing Consumer API independently
 - **Network**: Creates `consumer_default` network
-- **Kafka Connection**: Fails gracefully (autoStartup=false)
+- **Kafka Connection**: Fails gracefully (autoStartup=true)
 - **Health Check**: Shows Kafka as DOWN
 - **API**: Fully functional on port 8082
 - **Message Consumption**: Disabled
@@ -630,10 +644,175 @@ docker restart order-service
 - `LOGGING_LEVEL_MTA_EDA_CONSUMER=DEBUG` - Application debug logs
 
 ### Kafka Listener Behavior
-- **autoStartup=false** in KafkaConsumerConfig allows Consumer to start without Kafka
-- Listeners remain inactive until Kafka connection is established
-- No crashes or exceptions when Kafka is unavailable
-- Enables independent testing and deployment
+- **autoStartup=true** in KafkaConsumerConfig allows Consumer to start immediately
+- Listeners attempt to connect on startup
+- If Kafka is unavailable, Spring logs errors but application stays up
+- KafkaConnectivityService monitors health status independently
+- Enables faster startup and immediate consumption when Kafka is ready
+
+---
+
+## Status Machine (State Validation)
+
+### Overview
+The consumer enforces a **state machine** to validate order status transitions, preventing invalid state changes and maintaining data consistency.
+
+**Implementation Location**: `consumer/src/main/java/mta/eda/consumer/service/util/StatusMachine.java`
+
+### Allowed Status Progression
+
+```
+NEW (0) → CONFIRMED (1) → DISPATCHED (2) → COMPLETED (3)
+                        ↓
+                    CANCELED (4) [terminal - reachable from any state]
+```
+
+### Status Definitions
+
+| Status | Order | Description | Terminal? |
+|--------|-------|-------------|-----------|
+| NEW | 0 | Order just created | No |
+| CONFIRMED | 1 | Customer confirmed order | No |
+| DISPATCHED | 2 | Order sent to shipping | No |
+| COMPLETED | 3 | Order delivered | Yes |
+| CANCELED | 4 | Order canceled (any time) | Yes |
+
+### Validation Rules
+
+#### ✅ **Valid Transitions**
+
+1. **Forward Progression**
+   - NEW → CONFIRMED (0 → 1) ✅
+   - CONFIRMED → DISPATCHED (1 → 2) ✅
+   - DISPATCHED → COMPLETED (2 → 3) ✅
+   - NEW → DISPATCHED (0 → 2, skip CONFIRMED) ✅
+
+2. **Cancellation (Terminal State)**
+   - NEW → CANCELED ✅
+   - CONFIRMED → CANCELED ✅
+   - DISPATCHED → CANCELED ✅
+   - COMPLETED → CANCELED ✅ (can cancel even completed orders)
+
+#### ❌ **Invalid Transitions**
+
+1. **Backward Progression**
+   - COMPLETED → DISPATCHED ❌
+   - DISPATCHED → CONFIRMED ❌
+   - CONFIRMED → NEW ❌
+
+2. **Unknown Statuses**
+   - Any unknown status → Rejected ❌
+   - Only: NEW, CONFIRMED, DISPATCHED, COMPLETED, CANCELED allowed
+
+### Implementation Details
+
+#### Consumer Processing Flow
+
+```
+┌──────────────────────────────────────┐
+│ 1. Receive order from Kafka          │
+│    orderId: ORD-123                  │
+│    status: "confirmed"               │
+└───────────┬──────────────────────────┘
+            ↓
+┌──────────────────────────────────────┐
+│ 2. Check idempotency (exact match)   │
+│    Current: CONFIRMED                │
+│    Incoming: CONFIRMED               │
+│    → Skip (duplicate)                │
+└───────────┬──────────────────────────┘
+            ↓
+┌──────────────────────────────────────┐
+│ 3. Validate state transition         │
+│    Using StatusMachine               │
+│    Current: NEW, Incoming: CONFIRMED │
+│    Check: 1 >= 0? YES → Valid        │
+└───────────┬──────────────────────────┘
+            ↓
+┌──────────────────────────────────────┐
+│ 4. Process order                     │
+│    Calculate shipping cost           │
+│    Update internal store             │
+└───────────┬──────────────────────────┘
+            ↓
+┌──────────────────────────────────────┐
+│ 5. Manual acknowledgment             │
+│    Only if all previous steps pass   │
+└──────────────────────────────────────┘
+```
+
+#### Code Integration
+
+In `OrderService.processOrder()`:
+
+```java
+// Validate status transition using state machine
+String currentStatus = current == null ? null : current.order().status();
+if (!StatusMachine.isValidTransition(currentStatus, order.status())) {
+    logger.warn("⊘ Invalid Status Transition: Order {} cannot transition from '{}' to '{}'", 
+                orderId, currentStatus, order.status());
+    return; // Skip invalid message
+}
+```
+
+### Logging Examples
+
+**Valid Transition:**
+```
+✓ Successfully processed order: orderId=ORD-123, status=CONFIRMED
+✓ Updated order ORD-123. Status: NEW → CONFIRMED
+```
+
+**Duplicate Detection (Same Status):**
+```
+⊘ Idempotency Check: Order ORD-123 already in state 'CONFIRMED'. Skipping duplicate.
+```
+
+**Invalid Transition:**
+```
+⊘ Invalid Status Transition: Order ORD-123 cannot transition from 'DISPATCHED' to 'NEW'. Skipping.
+```
+
+### Behavior on Invalid Messages
+
+1. **Idempotency Check Fails** (Exact duplicate):
+   - Log: "Idempotency Check: ... Skipping duplicate"
+   - Action: Skip processing
+   - State: Unchanged
+   - Acknowledge: Yes (prevents redelivery)
+
+2. **State Transition Fails** (Invalid transition):
+   - Log: "Invalid Status Transition: ... Skipping"
+   - Action: Skip processing
+   - State: Unchanged
+   - Acknowledge: Yes (prevents redelivery)
+
+3. **Both Checks Pass** (Valid new state):
+   - Log: "Successfully processed order: ..."
+   - Action: Update internal state
+   - State: Changed to new status
+   - Acknowledge: Yes (advances offset)
+
+### Debug Endpoint
+
+To view all processed messages (which reflect valid state transitions):
+
+```bash
+curl http://localhost:8082/order-service/debug/all-messages
+```
+
+Response shows only messages that passed validation:
+```json
+{
+  "totalMessages": 5,
+  "messages": [
+    {"time": "2026-01-04T10:00:00Z", "orderId": "ORD-123", "status": "new"},
+    {"time": "2026-01-04T10:01:00Z", "orderId": "ORD-123", "status": "confirmed"},
+    {"time": "2026-01-04T10:02:00Z", "orderId": "ORD-123", "status": "dispatched"},
+    ...
+  ]
+}
+```
 
 ---
 
@@ -646,5 +825,3 @@ docker restart order-service
 5. **Use `MANUAL_IMMEDIATE` for health** - synchronous and predictable
 6. **Enable debug logging** for the consumer package during development
 7. **Use health checks** for production deployment verification
-
-
