@@ -50,9 +50,10 @@ public class KafkaConnectivityService {
     private final String bootstrapServers;
     @Getter
     private final String topicName;
-    private final Optional<KafkaListenerEndpointRegistry> kafkaListenerEndpointRegistry;
+
     private final Retry kafkaRetry;
     private final ScheduledExecutorService scheduler;
+    private final KafkaListenerEndpointRegistry kafkaListenerEndpointRegistry;
 
     // Connection state (thread-safe)
     private final AtomicBoolean kafkaConnected = new AtomicBoolean(false);
@@ -64,8 +65,8 @@ public class KafkaConnectivityService {
     public KafkaConnectivityService(
             @Value("${spring.kafka.bootstrap-servers:localhost:9092}") String bootstrapServers,
             @Value("${kafka.consumer.topic:orders}") String topicName,
-            Optional<KafkaListenerEndpointRegistry> kafkaListenerEndpointRegistry,
-            @Autowired(required = false) RetryRegistry retryRegistry) {
+            @Autowired(required = false) RetryRegistry retryRegistry,
+            @Autowired(required = false) KafkaListenerEndpointRegistry kafkaListenerEndpointRegistry) {
         this.bootstrapServers = bootstrapServers;
         this.topicName = topicName;
         this.kafkaListenerEndpointRegistry = kafkaListenerEndpointRegistry;
@@ -217,6 +218,7 @@ public class KafkaConnectivityService {
         if (topicExists && !wasReady) {
             logger.info("✓ Kafka topic '{}' ready for use!", topicName);
             topicReady.set(true);
+            startKafkaListeners();  // Start consumers now that Kafka is ready
 
         } else if (!topicExists && wasReady) {
             logger.warn("✗ Kafka topic '{}' became unavailable! Will retry...", topicName);
@@ -345,10 +347,12 @@ public class KafkaConnectivityService {
      * More accurate than just connection status.
      */
     public boolean areListenersRunning() {
-        return kafkaListenerEndpointRegistry
-                .map(registry -> registry.isRunning() && registry.getListenerContainers().stream()
-                        .anyMatch(org.springframework.kafka.listener.MessageListenerContainer::isRunning))
-                .orElse(false);
+        if (kafkaListenerEndpointRegistry == null) {
+            return false;
+        }
+        return kafkaListenerEndpointRegistry.isRunning() &&
+               kafkaListenerEndpointRegistry.getListenerContainers().stream()
+                       .anyMatch(org.springframework.kafka.listener.MessageListenerContainer::isRunning);
     }
 
     /**
@@ -447,6 +451,33 @@ public class KafkaConnectivityService {
         } catch (Exception e) {
             logger.debug("Kafka ping failed: {}", e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Start Kafka listeners once Kafka becomes available.
+     * This is called when Kafka connectivity is established and the topic is ready.
+     */
+    private void startKafkaListeners() {
+        if (kafkaListenerEndpointRegistry == null) {
+            logger.error("KafkaListenerEndpointRegistry is null - cannot start listeners");
+            return;
+        }
+
+        try {
+            logger.info("Checking listener registry status...");
+            boolean isRunning = kafkaListenerEndpointRegistry.isRunning();
+            logger.info("Listener registry running: {}", isRunning);
+
+            if (!isRunning) {
+                logger.info("Starting Kafka listeners...");
+                kafkaListenerEndpointRegistry.start();
+                logger.info("✓ Kafka listeners started successfully");
+            } else {
+                logger.info("Kafka listeners are already running");
+            }
+        } catch (Exception e) {
+            logger.error("Failed to start Kafka listeners: {}", e.getMessage(), e);
         }
     }
 
