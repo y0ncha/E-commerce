@@ -34,13 +34,13 @@ services:
       LOGGING_LEVEL_MTA_EDA_CONSUMER: DEBUG
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8082/order-service/health/live" ]
-      interval: 10s
+      interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 20s
+      retries: 10
+      start_period: 40s
     networks:
       - kafka-shared-net
-    restart: unless-stopped
+#    restart: unless-stopped
 
 # Shared bridge network for connecting to Kafka
 # Must match the network defined in producer/docker-compose.yml
