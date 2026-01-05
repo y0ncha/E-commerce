@@ -1,7 +1,4 @@
 @echo off
-REM Get the directory where this script is located and navigate to project root
-cd /d "%~dp0.."
-
 echo ========================================
 echo Stopping E-commerce System
 echo ========================================

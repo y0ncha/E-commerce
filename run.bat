@@ -1,7 +1,4 @@
 @echo off
-REM Get the directory where this script is located and navigate to project root
-cd /d "%~dp0.."
-
 echo ========================================
 echo Starting E-commerce System
 echo ========================================
@@ -20,8 +17,8 @@ echo.
 
 cd ..
 
-echo Waiting for Kafka to be ready (15 seconds)...
-timeout /t 15 /nobreak >nul
+echo Waiting for Kafka to be ready (5 seconds)...
+timeout /t 5 /nobreak >nul
 echo.
 
 echo Starting Consumer...
@@ -44,8 +41,5 @@ echo   - Producer API:  http://localhost:8081/cart-service/health/live
 echo   - Consumer API:  http://localhost:8082/order-service/health/live
 echo   - Kafka UI:      http://localhost:8080
 echo.
-echo Topics created:
-echo   - orders
-echo   - orders-dlt
-echo.
 pause
+

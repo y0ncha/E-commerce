@@ -12,7 +12,7 @@ I utilize two primary Kafka topics to maintain event-driven reliability and data
 
 * **Purpose**: This is the primary event topic that carries all order lifecycle events, including **NEW, CONFIRMED, DISPATCHED, COMPLETED, and CANCELED**.
 
-### orders.DLT | Dead Letter Topic
+### orders-dlt | Dead Letter Topic
 
 * **Purpose**: This topic captures messages that fail processing after multiple retry attempts (including deserialization failures), isolating "Poison Pills" so they do not block the main event stream. Pre-created by the producer at startup with 3 partitions and 7-day retention.
 * **Investigation & Recovery**: It allows operators to analyze root causes for failures and ensures zero data loss by storing unprocessable orders for manual redrive. Messages include enriched metadata headers (original-topic, original-partition, original-offset, exception details) for forensic analysis.
@@ -86,7 +86,7 @@ This system implements a comprehensive error handling framework designed to ensu
 * **Justification**: Provides comprehensive defense-in-depth by catching malformed events that pass JSON deserialization but violate structural, business logic, or state machine requirements. Acts as a protective barrier against schema evolution issues, producer bugs, data corruption, and out-of-order events, ensuring the final calculated shipping cost and order state remain logically consistent with the business workflow.
 
 **Poison Pill Handling & DLT (Dead Letter Topic)**:
-* **Mechanism**: Messages that fail processing (deserialization errors, validation failures, business logic exceptions) are automatically retried with exponential backoff (1s, 2s, 4s). After 3 retry attempts, Spring Kafka's `DeadLetterPublishingRecoverer` sends them to `orders.DLT` with enriched metadata headers including original topic, partition, offset, exception class name, exception message, and stack trace. The offset is then committed to prevent infinite retry loops.
+* **Mechanism**: Messages that fail processing (deserialization errors, validation failures, business logic exceptions) are automatically retried with exponential backoff (1s, 2s, 4s). After 3 retry attempts, Spring Kafka's `DeadLetterPublishingRecoverer` sends them to `orders-dlt` with enriched metadata headers including original topic, partition, offset, exception class name, exception message, and stack trace. The offset is then committed to prevent infinite retry loops.
 * **Justification**: Without this mechanism, a single malformed message (poison pill) would block the entire consumer pipeline indefinitely. The automatic retry with backoff handles transient errors (temporary network issues), while DLT routing ensures persistent errors (malformed JSON, schema mismatches) don't halt processing. Spring Kafka's standard metadata headers enable forensic investigation without manual log correlation.
 
 **Graceful Listener Degradation**:
@@ -118,7 +118,7 @@ This system implements a comprehensive error handling framework designed to ensu
 * **Justification**: Provides visibility into system health and validates the At-Least-Once strategy. A high idempotency skip rate proves that duplicate events are being successfully caught, while consumer lag metrics indicate processing bottlenecks before they cause rebalances.
 
 **Operational DLT Redrive Procedure**:
-* **Mechanism**: Analyze failed messages in `orders.DLT`, remediate root causes (code fixes, schema corrections), and manually republish messages to the main `orders` topic after verification.
+* **Mechanism**: Analyze failed messages in `orders-dlt`, remediate root causes (code fixes, schema corrections), and manually republish messages to the main `orders` topic after verification.
 * **Justification**: Prevents "Retry Storms" for non-transient data errors while ensuring eventual consistency. This controlled recovery process maintains data integrity without risking cascading failures from automated retry mechanisms that cannot distinguish between transient and persistent failures.
 
 ---
@@ -221,7 +221,7 @@ http://localhost:8080
 ```
 
 **Features**:
-- View all topics (`orders`, `orders.DLT`)
+- View all topics (`orders`, `orders-dlt`)
 - Inspect messages in each topic
 - Monitor consumer groups and lag
 - View partition details and offsets
@@ -259,7 +259,7 @@ The current system is architected with production scalability in mind. While the
 
 ### DLT Automation & Redrive Logic
 
-Messages routed to `orders.DLT` include enriched metadata headers automatically added by Spring Kafka's `DeadLetterPublishingRecoverer`:
+Messages routed to `orders-dlt` include enriched metadata headers automatically added by Spring Kafka's `DeadLetterPublishingRecoverer`:
 - `kafka_dlt-original-topic`: Source topic for message origin tracking
 - `kafka_dlt-original-partition`: Original partition number for sequencing verification
 - `kafka_dlt-original-offset`: Original offset for message recovery

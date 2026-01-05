@@ -1,17 +1,12 @@
 #!/bin/bash
 
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Navigate to the project root (parent of scripts directory)
-cd "$SCRIPT_DIR/.."
-
 echo "========================================"
 echo "Starting E-commerce System"
 echo "========================================"
 echo ""
 
 echo "Starting Producer (with Kafka)..."
-cd producer
+cd producer/
 docker compose up -d
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to start producer"
@@ -23,7 +18,7 @@ echo ""
 cd ..
 
 echo "Waiting for Kafka to be ready (15 seconds)..."
-sleep 15
+sleep 5
 echo ""
 
 echo "Starting Consumer..."
