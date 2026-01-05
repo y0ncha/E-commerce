@@ -46,14 +46,16 @@ services:
       test: [ "CMD", "curl", "-f", "http://localhost:8082/order-service/health/live" ]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 3
       start_period: 20s
     restart: unless-stopped
     networks:
-      - default
-      - producer-net
+      - consumer-network
 
 networks:
-  producer-net:
-    external: true
-    name: producer_ecommerce-network
+  consumer-network:
+    driver: bridge
+    name: consumer_network
+    # Consumer runs on its own network
+    # To connect to producer's Kafka, run:
+    #   docker network connect producer_ecommerce-network order-service

@@ -1,6 +1,7 @@
 package mta.eda.consumer.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import mta.eda.consumer.exception.ConsumerDeserializationErrorHandler;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -16,9 +17,6 @@ import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.ContainerProperties;
-import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
-import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.util.backoff.ExponentialBackOff;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -62,14 +60,16 @@ public class KafkaConsumerConfig {
     /**
      * KafkaListenerContainerFactory: Configures the listener container with:
      * 1. Manual acknowledgment mode (AckMode.MANUAL_IMMEDIATE)
-     * 2. Native error handling with exponential backoff retry
-     * 3. Dead Letter Topic (DLT) recovery for persistently failed messages
-     * 4. Auto-startup enabled for immediate consumption
+     * 2. Custom error handler that routes all failures to orders-dlt
+     * 3. Auto-startup enabled for immediate consumption
+     * Error Handling Strategy:
+     * - All errors (deserialization and processing) are routed to orders-dlt
+     * - No automatic retries: malformed data won't become valid on retry
+     * - The ConsumerDeserializationErrorHandler manages all error routing
      * At-Least-Once Delivery Model:
      * - Messages are acknowledged ONLY after successful processing
      * - If processing fails, the offset is NOT committed, allowing redelivery
-     * - Transient failures trigger exponential backoff retries
-     * - Persistent failures are sent to the DLT for later analysis
+     * - After max retries or on fatal errors, message is sent to orders-dlt
      * Sequencing Guarantees:
      * - orderId is used as the message key, ensuring messages for the same order
      *   are routed to the same partition and processed in order
@@ -79,7 +79,7 @@ public class KafkaConsumerConfig {
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
             ConsumerFactory<String, String> consumerFactory,
-            KafkaTemplate<String, String> kafkaTemplate) {
+            ConsumerDeserializationErrorHandler deserializationErrorHandler) {
         ConcurrentKafkaListenerContainerFactory<String, String> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
@@ -90,24 +90,9 @@ public class KafkaConsumerConfig {
         // Failure to acknowledge prevents offset advancement, ensuring At-Least-Once semantics.
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
 
-        // Configure native error handling with exponential backoff and DLT
-        // Retry Pattern (optimized for fast recovery):
-        // - Initial interval: 1 second (faster than before)
-        // - Multiplier: 2.0 (exponential)
-        // - Max interval: 10 seconds (quicker retries)
-        // - Max attempts: 3
-        // Retry sequence: 1s, 2s, 4s
-        // This allows transient failures (brief Kafka unavailability, network hiccups) to recover
-        // quickly without giving up immediately, while also not waiting too long.
-        ExponentialBackOff backOff = new ExponentialBackOff(1000, 2.0);
-        backOff.setMaxInterval(10000);  // Cap at 10 seconds (reduced from 30s)
-
-        DefaultErrorHandler errorHandler = new DefaultErrorHandler(
-                new DeadLetterPublishingRecoverer(kafkaTemplate),  // Send to DLT on final failure
-                backOff
-        );
-
-        factory.setCommonErrorHandler(errorHandler);
+        // Register custom error handler for deserialization and processing failures
+        // This handler routes ALL errors to orders-dlt without retries
+        factory.setCommonErrorHandler(deserializationErrorHandler);
 
         // Enable auto-startup for immediate consumption
         // Note: This means Spring will attempt to connect immediately on startup.
@@ -128,7 +113,6 @@ public class KafkaConsumerConfig {
 
     /**
      * DLQ Producer Factory: Configures a Kafka producer for sending poison pills to DLQ.
-     *
      * Why in consumer config: When a non-transient error (poison pill) is detected,
      * the consumer needs to send it to the DLQ topic. This requires producer configuration.
      * Uses String-String serialization to preserve raw message payload.
@@ -156,7 +140,7 @@ public class KafkaConsumerConfig {
 
     /**
      * DLQ Kafka Template: Template for sending String messages to DLQ.
-     * Injected into DlqProducerService for sending poison pills.
+     * Injected into DltProducerService for sending poison pills.
      */
     @Bean
     public KafkaTemplate<String, String> dlqKafkaTemplate() {

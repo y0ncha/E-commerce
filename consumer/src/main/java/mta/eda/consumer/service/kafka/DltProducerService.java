@@ -12,12 +12,10 @@ import java.nio.charset.StandardCharsets;
 /**
  * DLQ Producer Service for Consumer
  * Handles sending poison pills to the Dead Letter Queue.
- *
  * This service is called when:
  * 1. Message deserialization fails (JsonProcessingException)
  * 2. Message validation fails (IllegalArgumentException)
  * 3. Any non-transient error occurs that should not be retried
- *
  * Design Requirements (MTA EDA Course):
  * - Preserve orderId as message key for sequencing and traceability
  * - Add metadata headers (original topic, error reason, timestamp)
@@ -26,16 +24,16 @@ import java.nio.charset.StandardCharsets;
  *   to commit the offset and prevent infinite retry loops
  */
 @Service
-public class DlqProducerService {
+public class DltProducerService {
 
-    private static final Logger logger = LoggerFactory.getLogger(DlqProducerService.class);
+    private static final Logger logger = LoggerFactory.getLogger(DltProducerService.class);
 
     private final KafkaTemplate<String, String> kafkaTemplate;
 
-    @Value("${kafka.dlq.topic.name:orders-dlq}")
-    private String dlqTopicName;
+    @Value("${kafka.dlt.topic.name:orders-dlt}")
+    private String dltTopicName;
 
-    public DlqProducerService(KafkaTemplate<String, String> kafkaTemplate) {
+    public DltProducerService(KafkaTemplate<String, String> kafkaTemplate) {
         this.kafkaTemplate = kafkaTemplate;
     }
 
@@ -49,10 +47,10 @@ public class DlqProducerService {
      * @param partition the original partition (for debugging)
      * @param offset the original offset (for debugging)
      */
-    public void sendToDlq(String originalTopic, String key, String value,
+    public void sendToDlt(String originalTopic, String key, String value,
                           String errorReason, int partition, long offset) {
 
-        ProducerRecord<String, String> record = new ProducerRecord<>(dlqTopicName, key, value);
+        ProducerRecord<String, String> record = new ProducerRecord<>(dltTopicName, key, value);
 
         // Add metadata headers for debugging and traceability
         record.headers()
@@ -65,14 +63,14 @@ public class DlqProducerService {
         // Async send with callback (course requirement for resiliency)
         kafkaTemplate.send(record).whenComplete((result, ex) -> {
             if (ex != null) {
-                logger.error("CRITICAL: Failed to send message to DLQ. Topic={}, Key={}, OriginalPartition={}, OriginalOffset={}, Error={}",
-                           dlqTopicName, key, partition, offset, ex.getMessage());
+                logger.error("CRITICAL: Failed to send message to DLT. Topic={}, Key={}, OriginalPartition={}, OriginalOffset={}, Error={}",
+                           dltTopicName, key, partition, offset, ex.getMessage());
                 // In production: trigger alert/monitoring system here
-                // Consider: Should we fail the consumer if DLQ send fails?
+                // Consider: Should we fail the consumer if DLT send fails?
             } else {
-                logger.warn("✓ Poison pill sent to DLQ. Topic={}, Key={}, DLQPartition={}, DLQOffset={}, " +
+                logger.warn("✓ Poison pill sent to DLT. Topic={}, Key={}, DLTPartition={}, DLTOffset={}, " +
                           "OriginalPartition={}, OriginalOffset={}, Reason={}",
-                          dlqTopicName, key, result.getRecordMetadata().partition(),
+                          dltTopicName, key, result.getRecordMetadata().partition(),
                           result.getRecordMetadata().offset(), partition, offset, errorReason);
             }
         });

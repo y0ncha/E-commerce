@@ -53,6 +53,7 @@ services:
     networks:
       - ecommerce-network
 
+
   # Cart Service (Producer) - Publishes order events to Kafka
   cart-service:
     image: y0ncha/eda-producer:2.0.0

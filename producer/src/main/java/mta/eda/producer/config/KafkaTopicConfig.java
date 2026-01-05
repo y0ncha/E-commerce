@@ -7,6 +7,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.TopicBuilder;
 
+/**
+ * Kafka Topic Configuration
+ * Creates topics at application startup via Spring Kafka's KafkaAdmin.
+ * Topics are created synchronously during bean initialization.
+ * Important: Topics MUST exist before sending messages. While fail-fast=false
+ * allows the app to start if Kafka is down, attempting to send to a non-existent
+ * topic will fail immediately without retries (as retries don't help for missing topics).
+ */
 @Configuration
 public class KafkaTopicConfig {
 
@@ -23,22 +31,23 @@ public class KafkaTopicConfig {
     }
 
     /**
-     * Dead Letter Queue (DLQ) topic for poison pills.
+     * Dead Letter Topic (DLT) for poison pills and deserialization failures.
      * Key Design Decisions:
      * 1. Same number of partitions as main topic (3) to preserve key-partition mapping
-     * 2. This allows potential replay from DLQ while maintaining ordering guarantees
+     * 2. This allows potential replay from DLT while maintaining ordering guarantees
      * 3. 7-day retention for manual intervention and analysis
      * 4. Messages sent here preserve the original orderId as the key
      */
     @Bean
-    public NewTopic ordersDlqTopic(
+    public NewTopic ordersDltTopic(
             @Value("${kafka.topic.partitions:3}") int partitions,
             @Value("${kafka.topic.replication-factor:1}") short replicationFactor
     ) {
-        return TopicBuilder.name("orders-dlq")
-                .partitions(partitions)  // Same as main topic for key-partition mapping preservation
+        return TopicBuilder.name("orders-dlt")
+                .partitions(partitions)
                 .replicas(replicationFactor)
-                .config(TopicConfig.RETENTION_MS_CONFIG, "604800000")  // 7 days retention
+                .config(TopicConfig.RETENTION_MS_CONFIG, "604800000")
                 .build();
     }
 }
+
