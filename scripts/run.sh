@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Navigate to the project root (parent of scripts directory)
+cd "$SCRIPT_DIR/.."
+
 echo "========================================"
 echo "Starting E-commerce System"
 echo "========================================"
@@ -16,6 +21,10 @@ echo "✓ Producer started successfully!"
 echo ""
 
 cd ..
+
+echo "Waiting for Kafka to be ready (15 seconds)..."
+sleep 15
+echo ""
 
 echo "Starting Consumer..."
 cd consumer

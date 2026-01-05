@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Navigate to the project root (parent of scripts directory)
+cd "$SCRIPT_DIR/.."
+
 echo "========================================"
 echo "Stopping E-commerce System"
 echo "========================================"
