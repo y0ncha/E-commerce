@@ -192,6 +192,26 @@ Each service maintains its own independent data store, ensuring loose coupling a
 
 ---
 
+### Automated Startup Scripts
+
+For convenience, the system includes automated scripts to start and stop all services :
+
+REM Start the entire system (from project root)
+```cmd
+run.bat
+```
+REM Stop the entire system
+```cmd
+stop.bat
+```
+
+**What the scripts do**:
+1. Start the producer (which includes Kafka, Zookeeper, and Kafka UI)
+2. Wait 10 seconds for Kafka to be ready and topics to be created
+3. Start the consumer (which connects to the producer's Kafka)
+
+---
+
 ### Kafka UI
 
 A web-based interface for monitoring and managing Kafka is available at:
