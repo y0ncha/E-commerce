@@ -11,7 +11,7 @@
 #   View logs: docker compose logs -f [service-name]
 #
 # NETWORK:
-#   Creates 'producer_ecommerce-network' shared by all services
+#   Creates 'kafka-shared-net' shared by all services
 #   Consumer can join this network to access Kafka
 #
 # PORTS:
@@ -51,7 +51,7 @@ services:
       # Disable auto topic creation - force explicit topic definition via NewTopic beans
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
     networks:
-      kafka-shared-net:
+      - kafka-shared-net
 
   # Cart Service (Producer) - Publishes order events to Kafka
   cart-service:
