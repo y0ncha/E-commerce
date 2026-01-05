@@ -1,11 +1,11 @@
 # Consumer (Order Service) - Kafka message consumer
 #
-# SIMPLE APPROACH: Uses host.docker.internal to access Kafka
+# SHARED BRIDGE NETWORK APPROACH: Uses kafka-shared-net bridge network
 #
 # How it works:
-#   - Producer exposes Kafka on localhost:9092 (PLAINTEXT_HOST listener)
-#   - Consumer connects via host.docker.internal:9092
-#   - No need to join producer's network!
+#   - Both Producer and Consumer define 'kafka-shared-net' with 'name: kafka-shared-net'
+#   - Either compose file can be started first (idempotent configuration)
+#   - Consumer connects directly to kafka:9092 via the shared bridge network
 #   - Works in standalone mode (Kafka unavailable) and integrated mode (Kafka available)
 #
 # DEPLOYMENT:
@@ -24,13 +24,10 @@ services:
     container_name: order-service
     ports:
       - "8082:8082"  # Consumer API
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  # Map to host machine IP
     environment:
-      # Connect to Kafka via host machine's exposed port (localhost:9092)
-      # host.docker.internal resolves to host machine IP from container
-      # Works without joining producer's network!
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: host.docker.internal:9092
+      # Connect to Kafka via shared bridge network (kafka-shared-net)
+      # Uses service name 'kafka' which resolves via Docker DNS
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_KAFKA_CONSUMER_GROUP_ID: order-service-group
       KAFKA_TOPIC: orders
       LOGGING_LEVEL_ROOT: INFO
@@ -41,4 +38,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    networks:
+      - kafka-shared-net
     restart: unless-stopped
+
+# Shared bridge network for connecting to Kafka
+# Must match the network defined in producer/docker-compose.yml
+networks:
+  kafka-shared-net:
+    name: kafka-shared-net
+    driver: bridge
+    external: false

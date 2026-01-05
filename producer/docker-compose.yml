@@ -26,7 +26,7 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
     networks:
-      - ecommerce-network
+      - kafka-shared-net
 
   # Kafka Broker - Message streaming platform
   kafka:
@@ -41,8 +41,8 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       # Two listeners:
       #   PLAINTEXT://kafka:29092 - Internal Docker network access
-      #   PLAINTEXT_HOST://localhost:9092 - Host machine access
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      #   PLAINTEXT_HOST://kafka:9092 - External access via shared network
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://kafka:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -51,7 +51,7 @@ services:
       # Disable auto topic creation - force explicit topic definition via NewTopic beans
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
     networks:
-      - ecommerce-network
+      kafka-shared-net:
 
   # Cart Service (Producer) - Publishes order events to Kafka
   cart-service:
@@ -74,7 +74,7 @@ services:
       retries: 3
       start_period: 20s
     networks:
-      - ecommerce-network
+      - kafka-shared-net
     restart: unless-stopped
 
   # Kafka UI for better monitoring and debugging
@@ -87,12 +87,14 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
     networks:
-      - ecommerce-network
+      - kafka-shared-net
     depends_on:
       - kafka
 
-# Shared network for all Producer services
+# Shared network for all services
 # Consumer can join this network to access Kafka
 networks:
-  ecommerce-network:
+  kafka-shared-net:
+    name: kafka-shared-net
     driver: bridge
+    external: false
