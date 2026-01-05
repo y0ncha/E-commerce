@@ -1,6 +1,6 @@
 # Consumer (Order Service) - Kafka message consumer
 #
-# SHARED BRIDGE NETWORK APPROACH: Uses kafka-shared-net bridge network
+# SHARED BRIDGE NETWORK: Uses kafka-shared-net bridge network
 #
 # How it works:
 #   - Both Producer and Consumer define 'kafka-shared-net' with 'name: kafka-shared-net'
