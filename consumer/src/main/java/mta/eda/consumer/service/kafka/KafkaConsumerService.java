@@ -23,13 +23,13 @@ import java.util.concurrent.ConcurrentMap;
  * 3. Implement idempotency check to detect duplicate deliveries
  * 4. Maintain strict message sequencing using orderId as partition key
  * 5. Manual acknowledgment only after successful processing
- * 6. Error propagation for native error handler to trigger retry/DLT flow
+ * 6. Error propagation to ConsumerDeserializationErrorHandler for DLT routing
  * At-Least-Once Delivery Model:
  * - Kafka is configured with manual offset management (enable-auto-commit=false)
  * - Offsets are NOT committed until after business logic succeeds
  * - If the listener throws an exception, offset remains uncommitted
- * - The native CommonErrorHandler retries with exponential backoff
- * - After max retries, the message is sent to the Dead Letter Topic (DLT)
+ * - The ConsumerDeserializationErrorHandler catches exceptions and routes to DLT
+ * - Failed messages are sent to the Dead Letter Topic (orders-dlt)
  * - The listener never calls acknowledgment.acknowledge() for failed messages
  * Sequencing & Idempotency:
  * - orderId is used as the Kafka message key
@@ -41,7 +41,8 @@ import java.util.concurrent.ConcurrentMap;
  * Error Propagation:
  * - If JSON deserialization fails, throw RuntimeException
  * - If business logic throws an exception, let it propagate (don't catch)
- * - The native CommonErrorHandler catches these exceptions and handles retry/DLT
+ * - The ConsumerDeserializationErrorHandler catches these exceptions
+ * - Error handler sends failed messages to orders-dlt with full metadata
  * - Only successful messages get manually acknowledged
  */
 @Service
@@ -51,7 +52,6 @@ public class KafkaConsumerService {
 
     private final OrderService orderService;
     private final ObjectMapper objectMapper;
-    private final DltProducerService dltProducerService;
 
     // Idempotency tracking: maps orderId to the last processed message details
     // Used to detect duplicate deliveries when a message is retried
@@ -59,11 +59,9 @@ public class KafkaConsumerService {
 
     public KafkaConsumerService(
             @Autowired OrderService orderService,
-            @Autowired ObjectMapper objectMapper,
-            @Autowired DltProducerService dltProducerService) {
+            @Autowired ObjectMapper objectMapper) {
         this.orderService = orderService;
         this.objectMapper = objectMapper;
-        this.dltProducerService = dltProducerService;
     }
 
     /**
@@ -215,36 +213,9 @@ public class KafkaConsumerService {
     }
 
     /**
-     * Handles a poison pill message by sending it to the DLT.
-     * MTA EDA Course Requirements:
-     * 1. Preserve orderId as message key for sequencing and traceability
-     * 2. Preserve original message payload (raw JSON string)
-     * 3. Add metadata headers (original topic, partition, offset, error reason)
-     * 4. Use async callback to log DLT send success/failure
-     * CRITICAL: Caller MUST call acknowledgment.acknowledge() after this method
-     * to commit the offset and prevent infinite retry loops.
-     *
-     * @param record the ConsumerRecord containing the poison pill
-     * @param errorReason description of why the message failed
+     * Inner class to track processed message metadata for idempotency detection.
      */
-    private void handlePoisonPill(ConsumerRecord<String, String> record, String errorReason) {
-        logger.warn("Handling poison pill. Key={}, Topic={}, Partition={}, Offset={}, Reason={}",
-                record.key(), record.topic(), record.partition(), record.offset(), errorReason);
-
-        dltProducerService.sendToDlt(
-            record.topic(),           // Original topic name
-            record.key(),             // Preserve orderId as key
-            record.value(),           // Raw JSON payload
-            errorReason,              // Error description
-            record.partition(),       // Original partition for debugging
-            record.offset()           // Original offset for debugging
-        );
-    }
-
-    /**
-         * Inner class to track processed message metadata for idempotency detection.
-         */
-        private record ProcessedMessageInfo(long offset, long processedAt) {
+    private record ProcessedMessageInfo(long offset, long processedAt) {
     }
 
     /**
