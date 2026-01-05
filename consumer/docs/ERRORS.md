@@ -524,69 +524,66 @@ sequenceDiagram
 
 **Purpose**: Store messages that fail processing after all retry attempts.
 
-**DLQ Topic Configuration:**
-```properties
-# Custom Kafka DLQ topic for storing failed messages
-kafka.dlq.topic.name=orders-dlq
-kafka.dlq.enabled=true
+**DLT Topic Configuration** (automatic via Spring Kafka):
+- **Topic Name**: `orders.DLT` (Spring Kafka naming convention: `{source-topic}.DLT`)
+- **Auto-Created**: Yes, by Kafka on first failed message
+- **Partitions**: Managed automatically by Kafka
+- **Key Preservation**: `orderId` maintained from original message
+- **Handler**: `DeadLetterPublishingRecoverer` configured in `KafkaConsumerConfig`
 
-# Topic Details:
-# - Name: orders-dlq
-# - Partitions: 3 (same as main topic for key-partition mapping)
-# - Retention: 7 days (for manual investigation and replay)
-# - Created at: Application startup (via KafkaTopicConfig)
-```
+**Why Spring Kafka's Native DLT?**
+- ✅ **Zero Configuration**: No application.properties needed
+- ✅ **Standard Pattern**: Industry-standard Spring Kafka approach
+- ✅ **Rich Metadata**: Automatic headers with exception details and stack traces
+- ✅ **Reliable**: Battle-tested by Spring Kafka framework
+- ✅ **Simpler Codebase**: Less custom code to maintain
 
-**Why a Custom DLQ Topic?**
-- ✅ **Explicit Topic Name**: Using `orders-dlq` instead of `orders.DLT` provides clarity
-- ✅ **Same Partition Count**: 3 partitions (same as `orders` topic) enables potential replay with preserved ordering
-- ✅ **orderId as Key**: Messages maintain the same key for partition routing
-- ✅ **Extended Metadata**: Headers include original-topic, original-partition, original-offset, error-reason, failed-at
-- ✅ **Async Callback**: Logs CRITICAL errors if DLQ send itself fails
-
-**DLQ Message Format:**
+**DLT Message Format:**
 ```json
 {
   "headers": {
-    "original-topic": "orders",
-    "original-partition": "0",
-    "original-offset": "42",
-    "error-reason": "Failed to process order: DB connection timeout",
-    "failed-at": "2026-01-04T10:30:00.000Z"
+    "kafka_dlt-original-topic": "orders",
+    "kafka_dlt-original-partition": "0",
+    "kafka_dlt-original-offset": "42",
+    "kafka_dlt-original-timestamp": "1704364200000",
+    "kafka_dlt-exception-fqcn": "java.io.IOException",
+    "kafka_dlt-exception-message": "Failed to deserialize order",
+    "kafka_dlt-exception-stacktrace": "java.io.IOException: ...\n\tat mta.eda.consumer..."
   },
   "key": "ORD-123456",
   "value": "{original JSON message payload}"
 }
 ```
 
-**DLQ Processing Options:**
+**DLT Processing Options:**
 
 1. **Manual Investigation**:
-   - DevOps team monitors `orders-dlq` topic
-   - Analyze failed messages and their error reasons
-   - Fix root cause (e.g., restore DB, fix data)
-   - Manually replay messages from DLQ to `orders` topic
+   - DevOps team monitors `orders.DLT` topic
+   - Analyze failed messages using Spring Kafka's exception headers
+   - Fix root cause (e.g., code bug, schema issue, data quality)
+   - Manually replay messages from DLT to `orders` topic
 
 2. **Automated Replay** (Future Enhancement):
-   - Separate consumer reads from `orders-dlq`
-   - Applies fix/transformation
+   - Separate consumer reads from `orders.DLT`
+   - Uses `kafka_dlt-exception-fqcn` to categorize error types
+   - Applies fix/transformation for recoverable errors
    - Republishes to `orders` topic using same `orderId` key
    - Partition routing ensures messages process in order
 
 3. **Alerting & Monitoring**:
-   - Monitor `orders-dlq` message count
+   - Monitor `orders.DLT` message count
    - Alert if messages appear (indicates systemic issue)
-   - Track error reasons to identify patterns
+   - Track `kafka_dlt-exception-fqcn` patterns
    - Examples:
-     - High DB timeout errors → Database issue
-     - JSON deserialization failures → Data quality issue from producer
-     - Connection timeouts → Network issue
+     - High `IOException` count → Data quality issue from producer
+     - High `TimeoutException` → Database or network issue
+     - High `JsonProcessingException` → Schema mismatch
 
-**When Messages Go to DLQ:**
-- ✅ **After 3 failed retries** (transient errors: timeouts, DB unavailable)
-- ✅ **Non-retryable exceptions** (corrupted data, validation errors)
-- ✅ **Processing exceptions** (unrecoverable business logic errors)
-- ❌ **NOT** for valid messages that are rejected by sequencing validation (these are logged but not sent to DLQ)
+**When Messages Go to DLT:**
+- ✅ **After 3 failed retries** (1s, 2s, 4s exponential backoff)
+- ✅ **All exception types** (deserialization, validation, business logic)
+- ✅ **Automatic offset commit** after DLT send (prevents infinite loops)
+- ❌ **NOT** for valid messages that pass idempotency checks (these are skipped silently)
 
 ### Kafka Connectivity Monitoring
 
@@ -962,6 +959,295 @@ boolean ready = serviceUp && stateUp && kafkaAvailable;
 **Validation Check:**
 - `@NotBlank` → Ensures topicName is provided
   - Failure: HTTP 400, Message: "topicName is required"
+
+---
+
+## 4. API Response Behavior During Connection Issues
+
+This section clarifies how the consumer API responds when Kafka experiences connectivity problems.
+
+### Key Principle: Consumer is Read-Only (No Direct Kafka Dependency)
+
+**Important**: The Consumer API (Order Service) **does NOT send messages to Kafka**. It only:
+- ✅ Reads messages from Kafka (via `@KafkaListener`)
+- ✅ Updates local state store
+- ✅ Serves queries via REST endpoints
+
+Therefore, **Kafka connection issues do NOT directly affect API responses for GET requests**.
+
+### GET Endpoint Behavior (Order-Details)
+
+#### When Kafka is UP ✅
+```
+GET /order-details/ORD-123
+↓
+Consumer listening to orders topic
+↓
+State store has data
+↓
+HTTP 200 OK
+{
+  "orderId": "ORD-123",
+  "status": "CONFIRMED",
+  "shippingCost": 15.50
+}
+```
+
+#### When Kafka is DOWN ❌ (But Consumer App Running)
+```
+GET /order-details/ORD-123
+↓
+Consumer NOT listening (Kafka unreachable)
+↓
+State store has STALE data (from before Kafka went down)
+↓
+HTTP 200 OK (with stale data!)
+{
+  "orderId": "ORD-123",
+  "status": "CONFIRMED",  ← May be outdated
+  "shippingCost": 15.50
+}
+
+⚠️ WARNING: Data may be stale!
+The consumer can't receive new messages from Kafka,
+so the state store doesn't get updated.
+```
+
+### GET Endpoint Behavior (All-Messages & All-Orders)
+
+#### When Kafka is UP ✅
+```
+GET /order-service/debug/all-messages
+↓
+Returns all successfully processed orders
+↓
+HTTP 200 OK with complete list
+```
+
+#### When Kafka is DOWN ❌
+```
+GET /order-service/debug/all-messages
+↓
+Returns all orders seen BEFORE Kafka went down
+↓
+HTTP 200 OK with potentially incomplete list
+
+⚠️ WARNING: List may be incomplete!
+No new messages were received while Kafka was down.
+```
+
+### Health Check Endpoints (Readiness/Liveness)
+
+#### Readiness Probe: `/health/ready`
+
+**When Kafka is UP ✅**:
+```bash
+curl http://localhost:8082/health/ready
+```
+
+Response:
+```json
+{
+  "status": "UP",
+  "components": {
+    "kafkaHealthIndicator": {
+      "status": "UP",
+      "details": {
+        "brokers": "1",
+        "topics": "2",
+        "ordersTopicReady": true
+      }
+    }
+  }
+}
+```
+HTTP Status: **200 OK**
+
+**When Kafka is DOWN ❌**:
+```bash
+curl http://localhost:8082/health/ready
+```
+
+Response:
+```json
+{
+  "status": "DOWN",
+  "components": {
+    "kafkaHealthIndicator": {
+      "status": "DOWN",
+      "details": {
+        "error": "Cannot connect to Kafka broker at kafka:29092",
+        "brokers": "0",
+        "topics": "0"
+      }
+    }
+  }
+}
+```
+HTTP Status: **503 Service Unavailable**
+
+#### Liveness Probe: `/health/live`
+
+**When Kafka is UP ✅**:
+```bash
+curl http://localhost:8082/health/live
+```
+
+Response:
+```json
+{
+  "status": "UP",
+  "components": {
+    "livenessState": {
+      "status": "UP",
+      "details": {
+        "state": "CORRECT"
+      }
+    }
+  }
+}
+```
+HTTP Status: **200 OK**
+
+**When Kafka is DOWN ❌** (Consumer app still running):
+```bash
+curl http://localhost:8082/health/live
+```
+
+Response:
+```json
+{
+  "status": "UP",
+  "components": {
+    "livenessState": {
+      "status": "UP",
+      "details": {
+        "state": "CORRECT"
+      }
+    }
+  }
+}
+```
+HTTP Status: **200 OK** ← App is still alive!
+
+**Difference**: Liveness doesn't care about Kafka connectivity. It only checks if the JVM is responsive.
+
+### API Response Summary for Connection Issues
+
+| Scenario | GET Endpoint | Readiness | Liveness | Data Status |
+|----------|--------------|-----------|----------|------------|
+| **Kafka UP** | ✅ 200 OK | ✅ 200 OK | ✅ 200 OK | ✅ Current |
+| **Kafka DOWN** | ✅ 200 OK | ❌ 503 | ✅ 200 OK | ⚠️ Stale |
+| **Consumer Crashed** | ❌ Connection refused | ❌ No response | ❌ No response | N/A |
+
+### Handling Stale Data (Kafka Connection Loss)
+
+**Problem**: When Kafka is down, the consumer API still returns data, but it's stale (not updated while Kafka was unreachable).
+
+**Solutions**:
+
+1. **Use Readiness Check** (Recommended):
+   - Load balancer checks `/health/ready`
+   - If returns 503, removes consumer from traffic
+   - Users get routed to healthy instances
+
+2. **Monitor Stale Data Timestamp**:
+   - Track "last-updated" timestamp in state store
+   - Include in API responses
+   - Client can detect how old the data is
+
+3. **Enable Data Freshness Header**:
+   - Add HTTP header indicating data staleness
+   - Example: `X-Data-Staleness: 5m30s`
+   - Clients can decide whether to use data
+
+4. **Circuit Breaker Pattern** (Future Enhancement):
+   - If Kafka unreachable for >30 seconds
+   - Return HTTP 503 from GET endpoints
+   - Force client to handle unavailability
+
+### Example: Monitoring Data Freshness
+
+**Current Implementation**:
+```java
+// In OrderService
+private final ConcurrentMap<String, ProcessedOrder> processedOrderStore = new ConcurrentHashMap<>();
+private volatile long lastMessageReceivedAt = System.currentTimeMillis();
+
+@GetMapping("/all-orders")
+public ResponseEntity<?> getAllOrders() {
+    long stalenessMills = System.currentTimeMillis() - lastMessageReceivedAt;
+    
+    Map<String, Object> response = new HashMap<>();
+    response.put("orders", processedOrderStore.values());
+    response.put("lastUpdatedAt", new Date(lastMessageReceivedAt));
+    response.put("stalenessMs", stalenessMills);
+    
+    return ResponseEntity.ok(response);
+}
+```
+
+**Response with Staleness Indicator**:
+```json
+{
+  "orders": [...],
+  "lastUpdatedAt": "2026-01-04T10:30:00Z",
+  "stalenessMs": 300000,
+  "message": "Data is 5 minutes old"
+}
+```
+
+### Kafka Connectivity Impact on Consumer Listener
+
+**Listener State Changes**:
+
+```
+Normal Operation
+    ↓
+Consumer listening & receiving messages
+    ↓
+Every message updates state
+    ↓
+API returns current data
+    ↓
+    ▼
+Kafka Connection Lost
+    ↓
+Consumer stops receiving messages
+    ↓
+KafkaConnectivityService detects issue
+    ↓
+Listeners are paused (no active polling)
+    ↓
+Health endpoint returns 503
+    ↓
+API returns stale data (unchanged state)
+    ↓
+Load balancer removes instance from pool
+    ↓
+    ▼
+Kafka Connection Restored
+    ↓
+KafkaConnectivityService detects recovery
+    ↓
+Listeners resume polling
+    ↓
+Messages processed, state updates
+    ↓
+Health endpoint returns 200
+    ↓
+Load balancer re-adds instance to pool
+    ↓
+API returns current data
+```
+
+### Best Practices
+
+1. **Always Check Readiness**: Before sending traffic, verify `/health/ready` returns 200
+2. **Monitor Data Freshness**: Check "lastUpdatedAt" timestamp in responses
+3. **Use Health Probes**: Configure load balancer to use readiness checks
+4. **Log Connection Issues**: Monitor logs for Kafka connectivity warnings
+5. **Alert on Staleness**: If data staleness exceeds threshold (e.g., 30s), alert DevOps
 
 ---
 

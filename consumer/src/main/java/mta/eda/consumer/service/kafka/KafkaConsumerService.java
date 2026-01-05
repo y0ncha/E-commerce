@@ -51,7 +51,6 @@ public class KafkaConsumerService {
 
     private final OrderService orderService;
     private final ObjectMapper objectMapper;
-    private final DlqProducerService dlqProducerService;
 
     // Idempotency tracking: maps orderId to the last processed message details
     // Used to detect duplicate deliveries when a message is retried
@@ -59,11 +58,9 @@ public class KafkaConsumerService {
 
     public KafkaConsumerService(
             @Autowired OrderService orderService,
-            @Autowired ObjectMapper objectMapper,
-            @Autowired DlqProducerService dlqProducerService) {
+            @Autowired ObjectMapper objectMapper) {
         this.orderService = orderService;
         this.objectMapper = objectMapper;
-        this.dlqProducerService = dlqProducerService;
     }
 
     /**
@@ -212,35 +209,6 @@ public class KafkaConsumerService {
     private void recordProcessedMessage(String orderId, long offset) {
         idempotencyMap.put(orderId, new ProcessedMessageInfo(offset, System.currentTimeMillis()));
         logger.debug("Recorded processed message: orderId={}, offset={}", orderId, offset);
-    }
-
-    /**
-     * Handles a poison pill message by sending it to the DLQ.
-     *
-     * MTA EDA Course Requirements:
-     * 1. Preserve orderId as message key for sequencing and traceability
-     * 2. Preserve original message payload (raw JSON string)
-     * 3. Add metadata headers (original topic, partition, offset, error reason)
-     * 4. Use async callback to log DLQ send success/failure
-     *
-     * CRITICAL: Caller MUST call acknowledgment.acknowledge() after this method
-     * to commit the offset and prevent infinite retry loops.
-     *
-     * @param record the ConsumerRecord containing the poison pill
-     * @param errorReason description of why the message failed
-     */
-    private void handlePoisonPill(ConsumerRecord<String, String> record, String errorReason) {
-        logger.warn("Handling poison pill. Key={}, Topic={}, Partition={}, Offset={}, Reason={}",
-                record.key(), record.topic(), record.partition(), record.offset(), errorReason);
-
-        dlqProducerService.sendToDlq(
-            record.topic(),           // Original topic name
-            record.key(),             // Preserve orderId as key
-            record.value(),           // Raw JSON payload
-            errorReason,              // Error description
-            record.partition(),       // Original partition for debugging
-            record.offset()           // Original offset for debugging
-        );
     }
 
     /**

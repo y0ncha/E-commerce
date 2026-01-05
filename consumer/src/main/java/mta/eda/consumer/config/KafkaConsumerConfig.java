@@ -2,9 +2,7 @@ package mta.eda.consumer.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
-import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,9 +10,7 @@ import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
-import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
@@ -109,9 +105,9 @@ public class KafkaConsumerConfig {
 
         factory.setCommonErrorHandler(errorHandler);
 
-        // Enable auto-startup for immediate consumption
-        // Note: This means Spring will attempt to connect immediately on startup.
-        // If Kafka is down, Spring will log errors until it connects.
+        // Enable auto-startup so listeners start when Kafka is available
+        // With host.docker.internal, if Kafka is down the consumer will retry connecting
+        // If Kafka is up, listeners start immediately and begin consuming
         factory.setAutoStartup(true);
 
         return factory;
@@ -124,42 +120,5 @@ public class KafkaConsumerConfig {
     @Bean
     public ObjectMapper objectMapper() {
         return new ObjectMapper();
-    }
-
-    /**
-     * DLQ Producer Factory: Configures a Kafka producer for sending poison pills to DLQ.
-     *
-     * Why in consumer config: When a non-transient error (poison pill) is detected,
-     * the consumer needs to send it to the DLQ topic. This requires producer configuration.
-     * Uses String-String serialization to preserve raw message payload.
-     */
-    @Bean
-    public ProducerFactory<String, String> dlqProducerFactory() {
-        Map<String, Object> configProps = new HashMap<>();
-
-        configProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        configProps.put(ProducerConfig.CLIENT_ID_CONFIG, "consumer-dlq-producer");
-        configProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-
-        // Reliability settings
-        configProps.put(ProducerConfig.ACKS_CONFIG, "all");
-        configProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-        configProps.put(ProducerConfig.RETRIES_CONFIG, Integer.MAX_VALUE);
-
-        // Timeouts
-        configProps.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 10000);
-        configProps.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 15000);
-
-        return new DefaultKafkaProducerFactory<>(configProps);
-    }
-
-    /**
-     * DLQ Kafka Template: Template for sending String messages to DLQ.
-     * Injected into DlqProducerService for sending poison pills.
-     */
-    @Bean
-    public KafkaTemplate<String, String> dlqKafkaTemplate() {
-        return new KafkaTemplate<>(dlqProducerFactory());
     }
 }

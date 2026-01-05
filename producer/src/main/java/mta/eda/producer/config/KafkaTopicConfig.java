@@ -23,19 +23,26 @@ public class KafkaTopicConfig {
     }
 
     /**
-     * Dead Letter Queue (DLQ) topic for poison pills.
+     * Dead Letter Topic (DLT) for messages that fail after all retries.
+     *
+     * Topic Name: orders.DLT (Spring Kafka naming convention: {source-topic}.DLT)
+     *
      * Key Design Decisions:
-     * 1. Same number of partitions as main topic (3) to preserve key-partition mapping
-     * 2. This allows potential replay from DLQ while maintaining ordering guarantees
-     * 3. 7-day retention for manual intervention and analysis
-     * 4. Messages sent here preserve the original orderId as the key
+     * 1. Pre-created to ensure topic exists before first failure
+     * 2. Same number of partitions as main topic (3) to preserve key-partition mapping
+     * 3. This allows potential replay from DLT while maintaining ordering guarantees
+     * 4. 7-day retention for manual intervention and analysis
+     * 5. Messages sent here preserve the original orderId as the key
+     *
+     * Note: Spring Kafka's DeadLetterPublishingRecoverer automatically sends to {topic}.DLT,
+     * so we pre-create this topic with appropriate settings rather than relying on auto-creation.
      */
     @Bean
-    public NewTopic ordersDlqTopic(
+    public NewTopic ordersDltTopic(
             @Value("${kafka.topic.partitions:3}") int partitions,
             @Value("${kafka.topic.replication-factor:1}") short replicationFactor
     ) {
-        return TopicBuilder.name("orders-dlq")
+        return TopicBuilder.name("orders.DLT")
                 .partitions(partitions)  // Same as main topic for key-partition mapping preservation
                 .replicas(replicationFactor)
                 .config(TopicConfig.RETENTION_MS_CONFIG, "604800000")  // 7 days retention

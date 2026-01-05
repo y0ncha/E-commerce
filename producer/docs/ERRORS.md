@@ -18,8 +18,7 @@ flowchart TD
     Broker[Kafka Broker]
     
     Client -->|HTTP Request| API
-    API -->|Validate| API
-    API -->|Business Logic| Service
+    API -->|Validate & Business Logic| Service
     Service -->|Send Message| Kafka
     Kafka -->|Check Failure Rate| CB
     CB -->|Attempt Send| Broker
@@ -489,6 +488,307 @@ HTTP Status: **503 Service Unavailable**
 
 **Testing**:
 Use the provided test script: `./scripts/test-missing-topic.sh`
+
+---
+
+## 1.5. API Response Behavior During Kafka Connection Issues
+
+This section clarifies how the Producer API responds when Kafka experiences connectivity problems.
+
+### Key Principle: Producer is Write-Only (Direct Kafka Dependency)
+
+**Important**: Unlike the Consumer, the Producer **MUST send messages to Kafka** for every order creation/update request. Therefore, **Kafka connection issues DIRECTLY affect API responses**.
+
+### POST/PUT Endpoint Behavior (Order Creation/Update)
+
+#### When Kafka is UP ✅
+
+```
+POST /cart-service/create-order with Order JSON
+    ↓
+OrderController validates request
+    ↓
+OrderService stores in local orderStore
+    ↓
+KafkaProducerService sends to orders topic
+    ↓
+Kafka broker acknowledges (acks=all)
+    ↓
+HTTP 201 Created
+{
+  "orderId": "ORD-123",
+  "status": "PENDING",
+  "numItems": 3,
+  "totalAmount": 99.99
+}
+```
+
+#### When Kafka is DOWN ❌ (Within 10s timeout)
+
+```
+POST /cart-service/create-order with Order JSON
+    ↓
+OrderController validates request
+    ↓
+OrderService stores in local orderStore
+    ↓
+KafkaProducerService attempts send
+    ↓
+Producer client retries for ~8 seconds (1s, 2s, 4s... exponential backoff)
+    ↓
+Delivery timeout (8s) reached
+    ↓
+Order rolled back from local store
+    ↓
+DLQ Topic attempted OR file log fallback
+    ↓
+HTTP 500 Internal Server Error
+{
+  "timestamp": "2026-01-04T12:00:00.000Z",
+  "error": "Internal Server Error",
+  "message": "The server encountered an error while publishing the order event.",
+  "path": "/cart-service/create-order",
+  "details": {
+    "type": "KAFKA_DOWN",
+    "orderId": "ORD-123"
+  }
+}
+
+⚠️ CRITICAL: Order rolled back locally!
+Local state does NOT reflect the failed order.
+Safe to retry.
+```
+
+#### When Circuit Breaker is OPEN (50% failure rate)
+
+```
+POST /cart-service/create-order with Order JSON
+    ↓
+OrderController validates request
+    ↓
+OrderService stores in local orderStore
+    ↓
+Circuit Breaker checks state
+    ↓
+Circuit is OPEN (protecting from cascade failure)
+    ↓
+Order rolled back from local store
+    ↓
+HTTP 503 Service Unavailable
+{
+  "timestamp": "2026-01-04T12:00:00.000Z",
+  "error": "Service Unavailable",
+  "message": "The service is temporarily unavailable due to high failure rates. Please try again later.",
+  "path": "/cart-service/create-order",
+  "details": {
+    "type": "CIRCUIT_BREAKER_OPEN"
+  }
+}
+
+⚠️ PROTECTION ACTIVE: Service protecting itself!
+Order rolled back locally.
+Retry after ~30 seconds (wait-duration-in-open-state).
+```
+
+### GET Endpoint Behavior (Order Details)
+
+#### When Kafka is UP ✅
+
+```
+GET /cart-service/order-details/ORD-123
+    ↓
+OrderController retrieves from local orderStore
+    ↓
+HTTP 200 OK
+{
+  "orderId": "ORD-123",
+  "status": "PENDING",
+  "numItems": 3,
+  "totalAmount": 99.99
+}
+```
+
+#### When Kafka is DOWN ❌ (But Producer App Running)
+
+```
+GET /cart-service/order-details/ORD-123
+    ↓
+OrderController retrieves from local orderStore
+    ↓
+HTTP 200 OK with order details
+{
+  "orderId": "ORD-123",
+  "status": "PENDING",
+  "numItems": 3,
+  "totalAmount": 99.99
+}
+
+✅ GET still works! (reads from local store)
+⚠️ But POST/PUT will fail (can't reach Kafka)
+```
+
+### Health Check Endpoints (Readiness/Liveness)
+
+#### Readiness Probe: `/health/ready`
+
+**When Kafka is UP ✅**:
+```bash
+curl http://localhost:8081/health/ready
+```
+
+Response:
+```json
+HTTP 200 OK
+{
+  "status": "UP",
+  "components": {
+    "kafkaHealthIndicator": {
+      "status": "UP",
+      "details": {
+        "brokers": "1",
+        "topics": "1",
+        "ordersTopicReady": true
+      }
+    }
+  }
+}
+```
+
+**When Kafka is DOWN ❌**:
+```bash
+curl http://localhost:8081/health/ready
+```
+
+Response:
+```json
+HTTP 503 Service Unavailable
+{
+  "status": "DOWN",
+  "components": {
+    "kafkaHealthIndicator": {
+      "status": "DOWN",
+      "details": {
+        "error": "Cannot connect to Kafka broker at kafka:29092",
+        "brokers": "0",
+        "topics": "0"
+      }
+    }
+  }
+}
+```
+
+#### Liveness Probe: `/health/live`
+
+**When Kafka is UP ✅**:
+```bash
+curl http://localhost:8081/health/live
+```
+
+Response:
+```json
+HTTP 200 OK
+{
+  "status": "UP",
+  "components": {
+    "livenessState": {
+      "status": "UP",
+      "state": "CORRECT"
+    }
+  }
+}
+```
+
+**When Kafka is DOWN ❌** (Producer app still running):
+```bash
+curl http://localhost:8081/health/live
+```
+
+Response:
+```json
+HTTP 200 OK ← App is still alive!
+{
+  "status": "UP",
+  "components": {
+    "livenessState": {
+      "status": "UP",
+      "state": "CORRECT"
+    }
+  }
+}
+```
+
+**Difference**: Liveness doesn't care about Kafka connectivity. It only checks if the JVM is responsive.
+
+### API Response Summary for Connection Issues
+
+| Scenario | POST/PUT (Create/Update) | GET (Read) | Readiness | Liveness |
+|----------|:----------------------:|:----------:|:---------:|:--------:|
+| **Kafka UP** | ✅ 201 Created | ✅ 200 OK | ✅ 200 OK | ✅ 200 OK |
+| **Kafka DOWN** | ❌ 500 Error | ✅ 200 OK | ❌ 503 | ✅ 200 OK |
+| **Circuit Open** | ❌ 503 Error | ✅ 200 OK | ❌ 503 | ✅ 200 OK |
+| **App Crashed** | ❌ Refused | ❌ Refused | ❌ Refused | ❌ Refused |
+
+### Handling Kafka Downtime (Producer Perspective)
+
+**Problem**: POST/PUT requests fail while GET requests still work (reading stale data from local store).
+
+**Solutions**:
+
+1. **Use Readiness Check** (Recommended):
+   - Load balancer checks `/health/ready`
+   - If returns 503, removes producer from traffic
+   - Clients routed away before attempting POST/PUT
+
+2. **Implement Retry Logic**:
+   - Client catches HTTP 500/503
+   - Implements exponential backoff
+   - Retries after 2-4 seconds
+   - Gives Kafka time to recover
+
+3. **Monitor Readiness Status**:
+   - Alert if readiness returns 503
+   - Indicates Kafka connectivity issue
+   - Triggers incident response
+
+4. **Check Local State Consistency**:
+   - Order is rolled back on failure
+   - Local store reflects actual state
+   - Safe to retry failed requests
+
+### Key Guarantees for Producer API
+
+✅ **No Ghost Orders**: If client receives error (500/503), order is NOT in Kafka
+- Application timeout (10s) > Kafka delivery timeout (8s)
+- Kafka stops retrying before API returns error
+
+✅ **State Consistency**: Local orderStore matches API response
+- Failed orders are rolled back
+- Successful orders remain in store
+- Client can safely retry on error
+
+✅ **Health Visibility**: Readiness endpoint reveals Kafka status
+- 200 = Ready to accept requests
+- 503 = Not ready (Kafka down or circuit open)
+- Load balancer can route accordingly
+
+### Recovery Process
+
+**When Kafka Goes Down**:
+```
+1. POST/PUT requests fail (HTTP 500/503)
+2. Local orders are rolled back
+3. Health endpoint returns 503
+4. Load balancer removes from traffic
+5. Orders in DLQ or failed-orders.log
+
+When Kafka Comes Back Up:
+1. KafkaConnectivityService detects recovery
+2. Health endpoint returns 200
+3. Load balancer re-adds to traffic
+4. Circuit breaker closes (testing recovery)
+5. POST/PUT requests work again
+6. DLQ/failed orders can be replayed
+```
 
 ---
 

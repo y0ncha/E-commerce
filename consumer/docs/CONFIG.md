@@ -953,91 +953,100 @@ Response shows only messages that passed validation:
 
 The Dead Letter Queue is a fallback mechanism for handling **poison pills** - messages that fail processing after maximum retries. This prevents the consumer from getting stuck on corrupted or invalid messages.
 
-### Configuration Properties
+### Spring Kafka Native DLT Configuration
 
-#### `kafka.dlq.topic.name=orders-dlq`
-- **Purpose**: Name of the Kafka DLQ topic for failed messages
-- **Default**: `orders-dlq`
-- **Why This Value**: Clearly named topic for messages that cannot be processed
-- **Topic Details**:
-  - **Name**: `orders-dlq`
-  - **Partitions**: 3 (same as main `orders` topic)
-  - **Retention**: 7 days (604,800,000 ms)
-  - **Key**: `orderId` (preserved from original message)
-  - **Auto-created**: Yes (via `KafkaTopicConfig`)
+The system uses Spring Kafka's built-in `DeadLetterPublishingRecoverer` which automatically handles Dead Letter Topic (DLT) routing without requiring custom configuration properties.
 
-#### `kafka.dlq.enabled=true`
-- **Purpose**: Enable/disable DLQ functionality
-- **Default**: `true`
-- **Why This Value**: Always enabled for data safety
-- **Impact**: Failed messages are sent to DLQ topic instead of being discarded
+#### DLT Topic: `orders.DLT`
+- **Naming Convention**: Spring Kafka uses `{source-topic}.DLT` format
+- **Pre-created**: ✅ **YES** - Topic is pre-created at startup by the **producer** via `KafkaTopicConfig.ordersDltTopic()` bean
+- **Partitions**: 3 (same as main `orders` topic for key-partition mapping preservation)
+- **Replication Factor**: 1 (configurable via `kafka.topic.replication-factor`)
+- **Retention**: 7 days (604,800,000 ms) for manual investigation and replay
+- **Key**: `orderId` (preserved from original message for traceability)
+- **Purpose**: Captures messages that fail after all retry attempts
 
-#### `kafka.dlq.max-retries=3`
-- **Purpose**: Maximum retry attempts before sending to DLQ
-- **Default**: `3`
-- **Retry Sequence**:
-  - Attempt 1: Immediate
-  - Attempt 2: After 1 second delay
-  - Attempt 3: After 2 second delay
-  - Attempt 4: After 4 second delay
-  - After 4 failed attempts: Send to DLQ
-- **Why This Value**: Balances between transient failure recovery and quick failure detection
+**Why Pre-Create?**
+- ✅ Ensures topic exists with proper configuration (partitions, retention) before first failure
+- ✅ Avoids relying on Kafka auto-creation with default settings
+- ✅ Guarantees same partition count as source topic for ordered replay capability
+- ✅ Custom retention policy (7 days) for manual intervention window
+
+**Where Configured:**
+- Producer: `KafkaTopicConfig.ordersDltTopic()` - Creates the topic at startup
+- Consumer: `KafkaConsumerConfig.kafkaListenerContainerFactory()` - Uses `DeadLetterPublishingRecoverer` to send failures to `orders.DLT`
+
+#### Retry Configuration (via `DefaultErrorHandler`)
+- **Retry Strategy**: Exponential backoff
+- **Initial Delay**: 1 second
+- **Multiplier**: 2.0x
+- **Max Interval**: 10 seconds
+- **Retry Sequence**: 1s → 2s → 4s (total ~7 seconds, 3 attempts)
+- **After Max Retries**: Message automatically sent to `orders.DLT`
 
 ### DLQ Error Handling Strategy
 
-**Messages Sent to DLQ:**
+Spring Kafka's `DeadLetterPublishingRecoverer` automatically handles all types of processing failures:
 
-1. **Non-Transient Errors** (sent immediately):
-   - Deserialization failures: `JsonProcessingException`
+**All Errors Follow Same Flow:**
+
+1. **Error Occurs** (any exception in listener):
+   - Deserialization failures: `IOException` → `RuntimeException`
+   - Business logic errors: Any uncaught exception
    - Validation errors: `IllegalArgumentException`
-   - Corrupted message data (poison pills)
 
-2. **Transient Errors** (retried first):
-   - Database connection timeouts
-   - Temporary network issues
-   - Service temporarily unavailable
-   - Retry sequence: 1s → 2s → 4s (total ~7 seconds)
+2. **Automatic Retry** (handled by `DefaultErrorHandler`):
+   - Retry #1: After 1 second
+   - Retry #2: After 2 seconds  
+   - Retry #3: After 4 seconds
+   - Total time: ~7 seconds
 
-3. **Failed Messages After Max Retries**:
-   - After all retry attempts exhausted
-   - Message is sent to `orders-dlq` topic
-   - Offset is committed (prevents infinite loops)
+3. **After Retries Exhausted**:
+   - `DeadLetterPublishingRecoverer` automatically sends to `orders.DLT`
+   - Offset is committed (prevents infinite retry loops)
    - Consumer continues with next message
 
-### DLQ Message Format
+**No distinction between transient/non-transient** - all errors are retried the same way. This simplifies the error handling logic while still providing resilience for temporary failures.
 
-Messages in the `orders-dlq` topic include:
+### DLT Message Format
+
+Messages in the `orders.DLT` topic include rich metadata automatically added by Spring Kafka:
+
 - **Key**: Original `orderId` (preserved for traceability)
-- **Value**: Original JSON order payload
-- **Headers**:
-  - `original-topic`: "orders" (where message came from)
-  - `original-partition`: Original partition number
-  - `original-offset`: Original offset in partition
-  - `error-reason`: Description of why processing failed
-  - `failed-at`: Timestamp when sent to DLQ
+- **Value**: Original JSON order payload (unchanged)
+- **Headers** (automatically added by Spring Kafka):
+  - `kafka_dlt-original-topic`: "orders" (source topic)
+  - `kafka_dlt-original-partition`: Original partition number
+  - `kafka_dlt-original-offset`: Original offset in partition
+  - `kafka_dlt-original-timestamp`: Original message timestamp
+  - `kafka_dlt-exception-fqcn`: Fully qualified class name of exception (e.g., `java.io.IOException`)
+  - `kafka_dlt-exception-message`: Exception message describing the failure
+  - `kafka_dlt-exception-stacktrace`: Complete stack trace for debugging
 
 **Example Message**:
 ```json
 {
   "key": "ORD-123456",
   "headers": {
-    "original-topic": "orders",
-    "original-partition": "1",
-    "original-offset": "42",
-    "error-reason": "Failed to deserialize: missing required field 'totalAmount'",
-    "failed-at": "2026-01-04T10:30:00.000Z"
+    "kafka_dlt-original-topic": "orders",
+    "kafka_dlt-original-partition": "1",
+    "kafka_dlt-original-offset": "42",
+    "kafka_dlt-original-timestamp": "1704364200000",
+    "kafka_dlt-exception-fqcn": "java.io.IOException",
+    "kafka_dlt-exception-message": "Failed to deserialize: missing required field 'totalAmount'",
+    "kafka_dlt-exception-stacktrace": "java.io.IOException: ...\n\tat mta.eda.consumer..."
   },
   "value": "{\"orderId\": \"ORD-123456\", \"customerId\": \"C001\", ...}"
 }
 ```
 
-### DLQ Processing & Recovery
+### DLT Processing & Recovery
 
-**Monitoring DLQ Messages**:
+**Monitoring DLT Messages**:
 ```bash
-# View DLQ messages
+# View DLT messages
 kafka-console-consumer.sh --bootstrap-server localhost:9092 \
-  --topic orders-dlq \
+  --topic orders.DLT \
   --from-beginning \
   --property print.headers=true \
   --property print.key=true
@@ -1046,46 +1055,46 @@ kafka-console-consumer.sh --bootstrap-server localhost:9092 \
 **Recovery Options**:
 
 1. **Manual Investigation** (Recommended for Exercise 2):
-   - Monitor `orders-dlq` topic
-   - Analyze error reasons to identify root cause
-   - Fix underlying issue (data quality, schema version, etc.)
+   - Monitor `orders.DLT` topic
+   - Analyze Spring Kafka's exception headers to identify root cause
+   - Fix underlying issue (data quality, schema version, code bug)
    - Manually replay messages after confirming fix
 
 2. **Automated Replay** (Future Enhancement):
-   - Separate consumer reads from `orders-dlq`
-   - Applies transformation/fix
+   - Separate consumer reads from `orders.DLT`
+   - Analyzes `kafka_dlt-exception-fqcn` to categorize errors
+   - Applies transformation/fix for recoverable errors
    - Republishes to `orders` topic with same `orderId` key
    - Partition routing ensures ordering is preserved
 
 3. **Discard & Alert** (For Invalid Data):
    - If message is fundamentally corrupted
    - Archive to external storage for compliance
-   - Send alert to DevOps/Data Quality team
-
-### Configuration in application.properties
-
-```properties
-# DLQ Settings
-kafka.dlq.topic.name=orders-dlq
-kafka.dlq.enabled=true
-kafka.dlq.max-retries=3
-```
+   - Send alert to DevOps/Data Quality team based on `orders.DLT` message count
 
 ### Error Handler Configuration (in KafkaConsumerConfig.java)
+
+Spring Kafka's native error handling is configured in the listener container factory:
 
 ```java
 // Exponential backoff retry configuration
 ExponentialBackOff backOff = new ExponentialBackOff(1000, 2.0);  // 1s initial, 2x multiplier
 backOff.setMaxInterval(10000);  // Cap at 10 seconds
 
-// Create error handler with DLQ recovery
+// Create error handler with DLT recovery
 DefaultErrorHandler errorHandler = new DefaultErrorHandler(
-    new DeadLetterPublishingRecoverer(kafkaTemplate),  // Send to DLQ on failure
+    new DeadLetterPublishingRecoverer(kafkaTemplate),  // Automatically sends to {topic}.DLT
     backOff
 );
 
 factory.setCommonErrorHandler(errorHandler);
 ```
+
+**Key Points:**
+- No application.properties needed for DLT configuration
+- Topic naming is automatic: `{source-topic}.DLT`
+- Headers are automatically enriched by Spring Kafka
+- Works for all error types (deserialization, validation, business logic)
 
 ---
 
