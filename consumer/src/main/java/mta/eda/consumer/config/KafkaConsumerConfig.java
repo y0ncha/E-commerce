@@ -105,9 +105,9 @@ public class KafkaConsumerConfig {
 
         factory.setCommonErrorHandler(errorHandler);
 
-        // Enable auto-startup so listeners start when Kafka is available
-        // With host.docker.internal, if Kafka is down the consumer will retry connecting
-        // If Kafka is up, listeners start immediately and begin consuming
+        // Set autoStartup to true so containers are CREATED during initialization
+        // The @KafkaListener annotation has autoStartup="false" so they won't START automatically
+        // This allows KafkaConnectivityService to manually start them when Kafka is ready
         factory.setAutoStartup(true);
 
         return factory;

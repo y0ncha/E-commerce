@@ -217,6 +217,7 @@ public class KafkaConnectivityService {
         if (topicExists && !wasReady) {
             logger.info("✓ Kafka topic '{}' ready for use!", topicName);
             topicReady.set(true);
+            startKafkaListeners();  // ← AUTO-START LISTENERS WHEN KAFKA READY
 
         } else if (!topicExists && wasReady) {
             logger.warn("✗ Kafka topic '{}' became unavailable! Will retry...", topicName);
@@ -448,6 +449,59 @@ public class KafkaConnectivityService {
             logger.debug("Kafka ping failed: {}", e.getMessage());
             return false;
         }
+    }
+
+    /**
+     * Start Kafka listeners once Kafka becomes available.
+     * Called automatically when Kafka connectivity and topic are ready.
+     */
+    private void startKafkaListeners() {
+        logger.info("startKafkaListeners() called");
+
+        if (kafkaListenerEndpointRegistry.isEmpty()) {
+            logger.error("KafkaListenerEndpointRegistry is NOT present - cannot start listeners!");
+            logger.error("This means Spring didn't inject the registry. Check your configuration.");
+            return;
+        }
+
+        logger.info("✓ KafkaListenerEndpointRegistry is present");
+
+        kafkaListenerEndpointRegistry.ifPresent(registry -> {
+            try {
+                logger.info("Attempting to start Kafka listeners...");
+                logger.info("Registry class: {}", registry.getClass().getName());
+                logger.info("Registry instance: {}", registry);
+
+                boolean isAlreadyRunning = registry.isRunning();
+                logger.info("Listener registry running status: {}", isAlreadyRunning);
+
+                int containerCount = registry.getListenerContainers().size();
+                logger.info("Number of listener containers: {}", containerCount);
+
+                if (!isAlreadyRunning) {
+                    logger.info("Registry not running, starting listeners...");
+                    registry.start();
+
+                    // Verify it actually started
+                    Thread.sleep(1000);  // Give it a moment to start
+                    boolean nowRunning = registry.isRunning();
+                    logger.info("After start(), registry running: {}", nowRunning);
+
+                    if (nowRunning) {
+                        logger.info("✓✓✓ Kafka listeners started successfully ✓✓✓");
+                    } else {
+                        logger.warn("⚠ Listeners started but still not running, retrying...");
+                        registry.start();  // Try again
+                        Thread.sleep(1000);
+                        logger.info("After retry, registry running: {}", registry.isRunning());
+                    }
+                } else {
+                    logger.info("Listeners already running");
+                }
+            } catch (Exception e) {
+                logger.error("Failed to start Kafka listeners: {}", e.getMessage(), e);
+            }
+        });
     }
 
 }

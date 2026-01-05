@@ -1,18 +1,22 @@
 # Consumer (Order Service) - Kafka message consumer
 #
-# SIMPLE APPROACH: Uses host.docker.internal to access Kafka
+# SHARED NETWORK APPROACH: Joins external ecommerce-network
 #
 # How it works:
-#   - Producer exposes Kafka on localhost:9092 (PLAINTEXT_HOST listener)
-#   - Consumer connects via host.docker.internal:9092
-#   - No need to join producer's network!
-#   - Works in standalone mode (Kafka unavailable) and integrated mode (Kafka available)
+#   - Network created at root level (docker-compose.yml)
+#   - Both producer and consumer join the same ecommerce-network
+#   - Consumer accesses Kafka at: kafka:29092 (internal network)
+#   - Spring Kafka handles retries if Kafka not ready yet
+#   - Background monitoring keeps checking Kafka
+#   - Auto-connects when Kafka becomes available
 #
 # DEPLOYMENT:
 #   docker compose up -d
 #
-# STANDALONE MODE: Consumer starts without producer, API works, Kafka unavailable
-# INTEGRATED MODE: Start producer first, then consumer, full Kafka connectivity
+# STARTUP MODES:
+#   - Consumer can start first (waits for Kafka with exponential backoff)
+#   - Producer can start first (immediate Kafka connection)
+#   - Both simultaneously (both handle gracefully)
 #
 # PORTS:
 #   8082  - Order Service (Consumer API)
@@ -24,13 +28,11 @@ services:
     container_name: order-service
     ports:
       - "8082:8082"  # Consumer API
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  # Map to host machine IP
     environment:
-      # Connect to Kafka via host machine's exposed port (localhost:9092)
-      # host.docker.internal resolves to host machine IP from container
-      # Works without joining producer's network!
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: host.docker.internal:9092
+      # Connect to Kafka via shared Docker network (internal)
+      # kafka:29092 is the internal PLAINTEXT listener
+      # Spring Kafka will handle retries if Kafka not ready yet
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SPRING_KAFKA_CONSUMER_GROUP_ID: order-service-group
       KAFKA_TOPIC: orders
       LOGGING_LEVEL_ROOT: INFO
@@ -39,6 +41,17 @@ services:
       test: [ "CMD", "curl", "-f", "http://localhost:8082/order-service/health/live" ]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 3
       start_period: 20s
-    restart: unless-stopped
+    networks:
+      - ecommerce-network
+    restart: on-failure
+
+# Shared network (created manually: docker network create ecommerce-network)
+# Both producer and consumer join this network
+networks:
+  ecommerce-network:
+    driver: bridge
+    external: true
+    name: ecommerce-network
+

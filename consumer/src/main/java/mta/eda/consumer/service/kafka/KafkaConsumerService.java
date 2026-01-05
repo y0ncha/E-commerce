@@ -76,7 +76,8 @@ public class KafkaConsumerService {
     @KafkaListener(
             topics = "${kafka.consumer.topic:orders}",
             groupId = "${spring.kafka.consumer.group-id:order-service-group}",
-            containerFactory = "kafkaListenerContainerFactory"
+            containerFactory = "kafkaListenerContainerFactory",
+            autoStartup = "false"
     )
     public void consumeOrder(
             ConsumerRecord<String, String> record,
