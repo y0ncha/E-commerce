@@ -17,7 +17,7 @@ echo ""
 
 cd ..
 
-echo "Waiting for Kafka to be ready (15 seconds)..."
+echo "Waiting for Kafka to be ready (5 seconds)..."
 sleep 5
 echo ""
 
@@ -26,6 +26,7 @@ cd consumer
 docker compose up -d
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to start consumer"
+    echo "  Make sure producer is running first!"
     exit 1
 fi
 echo "✓ Consumer started successfully!"

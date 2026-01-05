@@ -4,18 +4,65 @@ Yonatan Csasznik - ID: 208259077
 
 ---
 
-## 2. Kafka Topics & Their Purpose
+## 1. Quick Start
 
-I utilize two primary Kafka topics to maintain event-driven reliability and data consistency across the distributed system.
+The system must be started in the correct order because the consumer connects to the **producer's Docker network**.
 
-### orders | Primary Event Stream
+---
 
-* **Purpose**: This is the primary event topic that carries all order lifecycle events, including **NEW, CONFIRMED, DISPATCHED, COMPLETED, and CANCELED**.
+**Option 1: Automated Startup (Recommended)**
+```bash
+run.bat
+```
 
-### orders-dlt | Dead Letter Topic
+**Option 2: Manual Startup**
+```bash
+# Terminal 1 - Start Producer (creates network & Kafka)
+cd producer
+docker compose up -d
 
-* **Purpose**: This topic captures messages that fail processing after multiple retry attempts (including deserialization failures), isolating "Poison Pills" so they do not block the main event stream. Pre-created by the producer at startup with 3 partitions and 7-day retention.
-* **Investigation & Recovery**: It allows operators to analyze root causes for failures and ensures zero data loss by storing unprocessable orders for manual redrive. Messages include enriched metadata headers (original-topic, original-partition, original-offset, exception details) for forensic analysis.
+# Terminal 2 - Start Consumer (joins producer's network after 15 seconds)
+cd consumer
+docker compose up -d
+```
+
+### Verification
+```bash
+# Producer Health
+curl http://localhost:8081/cart-service/health/live
+
+# Consumer Health
+curl http://localhost:8082/order-service/health/live
+
+# Kafka UI
+open http://localhost:8080
+```
+
+---
+
+## 2. Topic Configuration & Purpose
+
+I use two Kafka topics to maintain high availability and ensure strict message ordering as required by the Exercise 2 specifications:
+
+### 1. orders
+
+**Producer**: Cart Service.
+
+**Consumer**: Order Service.
+
+**Purpose**: This is the primary event stream for the order lifecycle (e.g. CREATED, UPDATED).
+
+**Design Choice (Single Topic)**: I use a single `orders` topic for all order lifecycle events rather than splitting into multiple topics (e.g., `orders-created`, `orders-updated`), separate topics would break ordering guarantees across independent partitions, causing race conditions and data integrity violations when events arrive out of sequence. 
+
+### 2. orders-dlt (Dead Letter Topic)
+
+**Producer**: Order Service.
+
+**Consumer**: Monitoring Tools / Manual Intervention.
+
+**Purpose**: To handle "Poison Pills" or unrecoverable processing errors (e.g., malformed JSON or persistent database timeouts).
+
+**Design Choice (Resilience)**: By moving failed messages here after exhausting retries, I prevent the main orders partition from stalling (blocking). Each message includes metadata headers (error reason, original offset) to facilitate forensic analysis and eventual manual recovery, ensuring Zero Data Loss.
 
 ---
 
@@ -25,8 +72,7 @@ I employ `orderId` as the partition key to maintain strict ordering semantics pe
 
 ### Partition Key: `orderId`
 
-* **Mechanism**: All events for a specific order are hashed and routed to the same partition based on the `orderId`.
-* **Sequencing**: Kafka ensures that messages within a partition are consumed and processed in the order they were produced. By pinning an order to a single partition, we guarantee that a `DISPATCHED` status never arrives at the consumer before `CONFIRMED`.
+* **Justification**: Kafka hashes the message key to determine the partition. By using orderId, I guarantee that every event for a specific order is routed to the same partition.
 * **Parallelism**: This strategy allows for high throughput as different orders can be processed in parallel across multiple partitions while maintaining internal consistency for each individual order.
 
 ---
@@ -68,14 +114,18 @@ This system implements a comprehensive error handling framework designed to ensu
 ### II. Consumer-Side Reliability (Order Service)
 
 **Manual Offset Management**:
-* **Mechanism**: Automatic offset commits are disabled. Offsets are committed manually only after the business logic (shipping calculation and state update) has successfully completed.
+* **Mechanism**: Automatic offset commits are disabled. Offsets are committed manually only after the business logic (shipping calculation) has successfully completed.
 * **Justification**: This is the core requirement for **At-Least-Once** delivery. If the consumer crashes during processing, the message will remain "unacknowledged" in Kafka and will be re-delivered to another consumer instance, ensuring no order is ever lost.
 
 **Dual-Layer Idempotency**:
-* **Mechanism**:
-  * **Infrastructure Layer**: Tracking the last processed Kafka offset per `orderId`.
-  * **Business Layer**: Verifying the current state of the order before applying a new update.
-* **Justification**: This dual-layer check ensures that redelivered messages do not result in duplicate shipping charges or invalid state transitions, effectively achieving "Exactly-Once" side effects.
+
+* **Infrastructure Layer**:
+  * **Mechanism**: The Kafka Producer is configured with `enable.idempotence=true`.
+  * **Justification**: This ensures that even if the producer retries a message due to a transient network error or "Ack Timeout," the broker will identify and discard the duplicate, maintaining a clean log at the transport level.
+
+* **Business Logic Layer**:
+  * **Mechanism**: Both the Producer and Consumer utilize a State Machine for deduplication.
+  * **Justification**: This prevents logic-level duplication. The system verifies the current status of an `orderId` before applying any change (e.g., ignoring a CREATED event if the state is already CONFIRMED). This effectively handles "At-Least-Once" redeliveries, ensuring that side effects like shipping charges are never applied twice.
 
 **Consumer Timeout Tuning**:
 * **Mechanism**: Session timeout and heartbeat intervals are configured to prevent false-positive failure detection. Session timeout is set to 10 seconds (reduced from default for faster failure detection), with heartbeat interval at 2 seconds.
