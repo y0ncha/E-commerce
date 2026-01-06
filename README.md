@@ -13,6 +13,8 @@ The system must be started in the correct order because the consumer connects to
 **Option 1: Automated Startup (Recommended)**
 ```bash
 run.bat
+# ...
+stop.bat
 ```
 
 **Option 2: Manual Startup**
