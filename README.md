@@ -83,7 +83,7 @@ This system implements a comprehensive error handling framework designed to ensu
 
 ---
 
-### I. Producer-Side Resilience (Cart Service)
+### I. Producer-Side (Cart Service)
 
 **Idempotent Producer Configuration**:
 * **Mechanism**: Kafka producer is configured with idempotence enabled, which automatically sets acknowledgments to require all replicas, enables high retry counts, and limits in-flight requests to maintain ordering.
@@ -111,7 +111,7 @@ This system implements a comprehensive error handling framework designed to ensu
 
 ---
 
-### II. Consumer-Side Reliability (Order Service)
+### II. Consumer-Side (Order Service)
 
 **Manual Offset Management**:
 * **Mechanism**: Automatic offset commits are disabled. Offsets are committed manually only after the business logic (shipping calculation) has successfully completed.
