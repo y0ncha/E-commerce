@@ -1,0 +1,9 @@
+{
+  "ticket_id": "EDA-003",
+  "title": "Implement Order Status Forwarding Service",
+  "description": "Create a new service that forwards order status updates to a downstream system or topic. This service should listen to the 'orders' topic and forward relevant status changes.",
+  "state": "intake",
+  "run_id": "run-20250120-001",
+  "created_at": "2025-01-20T12:00:00",
+  "updated_at": "2025-01-20T12:00:00"
+}
