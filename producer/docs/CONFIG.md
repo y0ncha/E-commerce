@@ -560,8 +560,8 @@ KAFKA_BOOTSTRAP_SERVERS=general:9092
 The Dead Letter Queue is a Kafka topic that stores messages that fail delivery after all retry attempts. This prevents data loss and enables investigation and recovery of failed orders.
 
 ### DLQ Topic Configuration
-- `kafka.dlq.topic.name=orders-dlq`
-  - **Default**: `orders-dlq`
+- `kafka.dlq.topic.name=orders-dlt`
+  - **Default**: `orders-dlt`
   - **Purpose**: Name of the topic for failed messages
   - **Auto-created**: Yes (via `KafkaTopicConfig.java`)
   - **Partitions**: 3 (same as main `orders` topic)
@@ -575,7 +575,7 @@ The Dead Letter Queue is a Kafka topic that stores messages that fail delivery a
   - **Impact**: Controls whether failed messages are sent to DLQ topic
 
 ### When Messages Go to DLQ
-Failed messages are sent to the `orders-dlq` topic when:
+Failed messages are sent to the `orders-dlt` topic when:
 
 1. **Delivery Timeout Exceeded** - Message fails after 8 seconds of retries
    - Retries exhausted: 1s → 2s → 4s → ... until delivery.timeout.ms reached
@@ -590,7 +590,7 @@ Failed messages are sent to the `orders-dlq` topic when:
    - Serialization errors (via async callback)
 
 ### DLQ Message Content
-Messages stored in `orders-dlq` topic include:
+Messages stored in `orders-dlt` topic include:
 
 **Message Structure**:
 - **Key**: `orderId` (preserved from original message)
@@ -636,7 +636,7 @@ public void sendToDlq(String originalTopic, String key, String value, String err
 ```bash
 # View failed messages in DLQ
 kafka-console-consumer.sh --bootstrap-server localhost:9092 \
-  --topic orders-dlq \
+  --topic orders-dlt \
   --from-beginning \
   --property print.headers=true \
   --property print.key=true
@@ -652,7 +652,7 @@ kafka-console-producer.sh --broker-list localhost:9092 \
 **Monitoring DLQ Growth**:
 ```bash
 # Check message count in DLQ
-kafka-topics.sh --describe --topic orders-dlq \
+kafka-topics.sh --describe --topic orders-dlt \
   --bootstrap-server localhost:9092
 
 # Set up alerts if DLQ messages accumulate
@@ -669,7 +669,7 @@ Order Send Attempt
   │  └─ Order delivered to 'orders' topic
   │
   └─ FAILURE ✗ (after 8s timeout or Circuit Breaker open)
-     ├─ DLQ Send Attempt (to 'orders-dlq' topic)
+     ├─ DLQ Send Attempt (to 'orders-dlt' topic)
      │  ├─ SUCCESS ✓
      │  │  └─ Message stored in DLQ for investigation
      │  │     (Kafka is operational but order delivery failed)

@@ -304,12 +304,12 @@ resilience4j.circuitbreaker.instances.cartService.sliding-window-type=COUNT_BASE
 The system implements **two complementary fallback mechanisms** to ensure no order data is lost even during infrastructure failures:
 
 #### 3a: Kafka DLQ Topic (Primary Fallback)
-- **Mechanism**: Failed messages are sent to the `orders-dlq` Kafka topic (if Kafka is operational)
+- **Mechanism**: Failed messages are sent to the `orders-dlt` Kafka topic (if Kafka is operational)
 - **Implementation**: `KafkaProducerService.sendToDlq()` method
 - **Trigger**: When message delivery fails after timeout or Circuit Breaker opens
 - **Topic Details**:
   ```properties
-  Topic Name: orders-dlq
+  Topic Name: orders-dlt
   Partitions: 3 (same as main topic for potential replay with ordering preserved)
   Retention: 7 days (allows time for manual investigation)
   Key: orderId (preserved from original message for traceability)
@@ -320,7 +320,7 @@ The system implements **two complementary fallback mechanisms** to ensure no ord
   - Async callback logs success/failure
 - **Goal**: Enable DevOps team to investigate failures and manually replay orders once infrastructure is restored
 - **Recovery Process**:
-  1. Monitor `orders-dlq` for failed messages
+  1. Monitor `orders-dlt` for failed messages
   2. Analyze error reasons and root cause
   3. Fix underlying issue (restore Kafka, fix network, etc.)
   4. Replay messages from DLQ back to `orders` topic
@@ -344,7 +344,7 @@ Order Send Attempt
   │  └─ Order delivered to 'orders' topic
   │
   └─ FAILURE ✗
-     ├─ DLQ Send Attempt (to 'orders-dlq' topic)
+     ├─ DLQ Send Attempt (to 'orders-dlt' topic)
      │  ├─ SUCCESS ✓
      │  │  └─ Message stored in DLQ for manual replay
      │  │     (Kafka is operational but order delivery failed)
@@ -358,7 +358,7 @@ Order Send Attempt
 **When Each Mechanism is Used:**
 | Scenario | Primary Fallback | Secondary Fallback |
 |----------|------------------|-------------------|
-| Order delivery fails, Kafka OK | ✅ DLQ Topic (orders-dlq) | N/A |
+| Order delivery fails, Kafka OK | ✅ DLQ Topic (orders-dlt) | N/A |
 | Kafka broker down | ❌ DLQ unavailable | ✅ File Log (failed-orders.log) |
 | Network partition | ❌ DLQ unreachable | ✅ File Log (failed-orders.log) |
 | DLQ send fails | ❌ DLQ send error | ✅ File Log (failed-orders.log) |

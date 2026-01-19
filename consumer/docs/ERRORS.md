@@ -527,18 +527,18 @@ sequenceDiagram
 **DLQ Topic Configuration:**
 ```properties
 # Custom Kafka DLQ topic for storing failed messages
-kafka.dlq.topic.name=orders-dlq
+kafka.dlq.topic.name=orders-dlt
 kafka.dlq.enabled=true
 
 # Topic Details:
-# - Name: orders-dlq
+# - Name: orders-dlt
 # - Partitions: 3 (same as main topic for key-partition mapping)
 # - Retention: 7 days (for manual investigation and replay)
 # - Created at: Application startup (via KafkaTopicConfig)
 ```
 
 **Why a Custom DLQ Topic?**
-- ✅ **Explicit Topic Name**: Using `orders-dlq` instead of `orders.DLT` provides clarity
+- ✅ **Explicit Topic Name**: Using `orders-dlt` instead of `orders.DLT` provides clarity
 - ✅ **Same Partition Count**: 3 partitions (same as `orders` topic) enables potential replay with preserved ordering
 - ✅ **orderId as Key**: Messages maintain the same key for partition routing
 - ✅ **Extended Metadata**: Headers include original-topic, original-partition, original-offset, error-reason, failed-at
@@ -562,19 +562,19 @@ kafka.dlq.enabled=true
 **DLQ Processing Options:**
 
 1. **Manual Investigation**:
-   - DevOps team monitors `orders-dlq` topic
+   - DevOps team monitors `orders-dlt` topic
    - Analyze failed messages and their error reasons
    - Fix root cause (e.g., restore DB, fix data)
    - Manually replay messages from DLQ to `orders` topic
 
 2. **Automated Replay** (Future Enhancement):
-   - Separate consumer reads from `orders-dlq`
+   - Separate consumer reads from `orders-dlt`
    - Applies fix/transformation
    - Republishes to `orders` topic using same `orderId` key
    - Partition routing ensures messages process in order
 
 3. **Alerting & Monitoring**:
-   - Monitor `orders-dlq` message count
+   - Monitor `orders-dlt` message count
    - Alert if messages appear (indicates systemic issue)
    - Track error reasons to identify patterns
    - Examples:

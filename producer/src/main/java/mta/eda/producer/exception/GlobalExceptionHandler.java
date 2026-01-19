@@ -12,7 +12,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -20,7 +19,6 @@ import java.util.Map;
  * GlobalExceptionHandler
  * Handles API errors for all controllers using a consistent envelope.
  * Aligned with MTA EDA Exercise 2 requirements.
- *
  * Error Types:
  * - VALIDATION_ERROR: Request validation failed
  * - MALFORMED_JSON: Invalid JSON in request body
@@ -34,6 +32,7 @@ import java.util.Map;
  * - TOPIC_NOT_FOUND: Required Kafka topic does not exist
  * - CIRCUIT_BREAKER_OPEN: Circuit breaker is open due to high failure rates
  */
+@SuppressWarnings("unused")
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -233,6 +232,9 @@ public class GlobalExceptionHandler {
         );
     }
 
+    /**
+     * Handle unhandled exceptions (500 Internal Server Error).
+     */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleUnhandled(Exception ex, HttpServletRequest request) {
         logger.error("Unhandled error: {}", ex.getMessage(), ex);

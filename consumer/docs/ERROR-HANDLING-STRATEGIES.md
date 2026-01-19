@@ -80,7 +80,7 @@ Database outages, Kafka broker unavailability, network failures, connection time
    - Returns HTTP 503 (Service Unavailable) when open
 
 3. **Fallback Mechanisms (Data Safety):**
-   - **Primary:** Dead Letter Queue (DLQ) topic `orders-dlq` for failed messages
+   - **Primary:** Dead Letter Queue (DLQ) topic `orders-dlt` for failed messages
    - **Secondary:** File-based logging to `failed-orders.log` when Kafka is completely down
    - Rollback logic: Failed creates are removed from state; failed updates restore previous version
 
@@ -98,7 +98,7 @@ Database outages, Kafka broker unavailability, network failures, connection time
    - Retry sequence: 1s → 2s → 4s
 
 2. **Dead Letter Topic (DLT):**
-   - Failed messages sent to `orders-dlq` after exhausting retries
+   - Failed messages sent to `orders-dlt` after exhausting retries
    - Preserves original message with metadata headers (original-topic, error-reason, failed-at)
    - 3 partitions (same as main topic) for potential ordered replay
    - 7-day retention for investigation and remediation
