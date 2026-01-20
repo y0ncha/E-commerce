@@ -33,8 +33,7 @@ services:
       SPRING_KAFKA_CONSUMER_GROUP_ID: order-service-group
       KAFKA_TOPIC: orders
       LOGGING_LEVEL_ROOT: INFO
-      LOGGING_LEVEL_MTA_EDA_CONSUMER: INFO
-      LOGGING_LEVEL_ORG_APACHE_KAFKA: WARN
+      LOGGING_LEVEL_MTA_EDA_CONSUMER: DEBUG
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8082/order-service/health/live" ]
       interval: 15s
