@@ -89,8 +89,8 @@ public class OrderService {
      * @return Optional containing the order if found
      */
     public Optional<Order> getOrder(String rawOrderId) {
-        String normalizedOrderId = normalizeOrderId(rawOrderId);
-        return Optional.ofNullable(processedOrderStore.get(normalizedOrderId))
+        String orderId = normalizeOrderId(rawOrderId);
+        return Optional.ofNullable(processedOrderStore.get(orderId))
                 .map(ProcessedOrder::order);
     }
 
@@ -102,8 +102,8 @@ public class OrderService {
      * @return Optional containing the processed order if found
      */
     public Optional<ProcessedOrder> getProcessedOrder(String rawOrderId) {
-        String normalizedOrderId = normalizeOrderId(rawOrderId);
-        return Optional.ofNullable(processedOrderStore.get(normalizedOrderId));
+        String orderId = normalizeOrderId(rawOrderId);
+        return Optional.ofNullable(processedOrderStore.get(orderId));
     }
 
     /**

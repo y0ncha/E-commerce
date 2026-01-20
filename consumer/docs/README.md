@@ -123,20 +123,25 @@ This system implements a comprehensive error handling framework designed to ensu
 
 ---
 
-## 5. Important Implementation Notes
+## 5. Running and Testing
 
-### State Machine Validation
+### Testing notes
 
-Both producer and consumer enforce a strict state machine that prevents invalid status transitions and out-of-order events.
-
-**Valid State Progression**:
-```
-new → confirmed → dispatched → completed
-                ↓
-            canceled (terminal state - accessible from any state)
-```
-
-**Justification**: Provides defense-in-depth validation across producer and consumer. The producer validates before publishing, preventing invalid transitions from entering the stream. The consumer re-validates on consumption, catching any out-of-order events caused by network delays, clock skew, or producer bugs. This layered approach ensures business logic (shipping calculations, order lifecycle) operates only on logically consistent state transitions, preventing race conditions and maintaining system resilience even when individual layers fail.
+* Run the Producer first in order to set up the docker network and kafka.
+  ```bash
+  cd producer
+  docker compose up
+  cd ..
+  cd consumer
+  docker compose up
+  ``` 
+* The status updates must be complient with the FSM design pattern :
+  ```
+  new → confirmed → dispatched → completed
+                  ↓
+              canceled (terminal state - accessible from any state)
+  ```
+* all the order endpoint expects order id as raw (no 'ORD-' prefix) hexa string.
 
 ---
 
@@ -161,6 +166,21 @@ The system uses two distinct health endpoints:
 
 ---
 
+### State Machine Validation
+
+Both producer and consumer enforce a strict state machine that prevents invalid status transitions and out-of-order events.
+
+**Valid State Progression**:
+```
+new → confirmed → dispatched → completed
+                ↓
+            canceled (terminal state - accessible from any state)
+```
+
+**Justification**: Provides defense-in-depth validation across producer and consumer. The producer validates before publishing, preventing invalid transitions from entering the stream. The consumer re-validates on consumption, catching any out-of-order events caused by network delays, clock skew, or producer bugs. This layered approach ensures business logic (shipping calculations, order lifecycle) operates only on logically consistent state transitions, preventing race conditions and maintaining system resilience even when individual layers fail.
+
+---
+
 ### Local State Rollback on Failure
 
 If Kafka publish fails, the producer removes the order from `orderStore`:
@@ -172,21 +192,17 @@ If Kafka publish fails, the producer removes the order from `orderStore`:
 
 ---
 
-## 6. Running and Testing Notes
-
 ### Docker Compose Configuration
 
 The system is split into two separate Docker Compose files for independent scalability:
 
 **Producer Compose (`producer/docker-compose.yml`)**:
-- **Cart Service**: The order creation API (port 8081). Users submit orders here. Built from the producer Dockerfile.
+- **Cart Service**: The order creation API (port 8081). Users submit orders here.
 - **Kafka Broker**: Message queue that stores order events. All orders flow through this.
 - **Zookeeper**: Manages Kafka coordination behind the scenes.
 
 **Consumer Compose (`consumer/docker-compose.yml`)**:
-- **Order Service**: Listens to order events and calculates shipping costs (port 8082). Built from the consumer Dockerfile.
-- **Kafka Broker**: Same message queue as above (shared infrastructure).
-- **Zookeeper**: Same coordination service as above (shared infrastructure).
+- **Order Service**: Listens to order events and calculates shipping costs (port 8082).
 
 Each service maintains its own independent data store, ensuring loose coupling and resilience.
 
@@ -212,29 +228,6 @@ stop.bat
 
 ---
 
-### Kafka UI
-
-A web-based interface for monitoring and managing Kafka is available at:
-
-```
-http://localhost:8080
-```
-
-**Features**:
-- View all topics (`orders`, `orders-dlt`)
-- Inspect messages in each topic
-- Monitor consumer groups and lag
-- View partition details and offsets
-- Useful for debugging message flow and verifying error handling
-
----
-
-### Cold Start Note
-
-Java Spring Boot applications experience initial startup delays during the first deployment and might take a few seconds to stableize.
-
----
-
 ### Postman Collections
 
 Two Postman collections are attached to the submission :
@@ -251,67 +244,5 @@ Two Postman collections are attached to the submission :
 
 ---
 
-## 7. Foundational Groundwork for Production
 
-The current system is architected with production scalability in mind. While the exercise uses in-memory storage and single-broker Kafka, the codebase is prepared for enterprise-grade enhancements without major refactoring.
-
----
-
-### DLT Automation & Redrive Logic
-
-Messages routed to `orders-dlt` include enriched metadata headers automatically added by Spring Kafka's `DeadLetterPublishingRecoverer`:
-- `kafka_dlt-original-topic`: Source topic for message origin tracking
-- `kafka_dlt-original-partition`: Original partition number for sequencing verification
-- `kafka_dlt-original-offset`: Original offset for message recovery
-- `kafka_dlt-exception-fqcn`: Fully qualified class name of the exception
-- `kafka_dlt-exception-message`: Specific error description for root cause analysis
-- `kafka_dlt-exception-stacktrace`: Complete stack trace for debugging
-- `kafka_dlt-original-timestamp`: Original message timestamp for audit trails
-
-**Production Ready**: This metadata enables future automated redrive services to:
-- Analyze failure patterns and categorize errors
-- Automatically retry transient errors after infrastructure recovery
-- Route persistent errors to human investigation workflows
-- Implement intelligent redrive scheduling based on error type
-
-No changes to DLT schema or producer logic would be required to add redrive automation.
-
----
-
-### Transition to Persistent External Memory (Database)
-
-Currently, both producer and consumer use in-memory data structures:
-- Producer: `ConcurrentHashMap<String, Order>` for order state
-- Consumer: `ConcurrentHashMap<String, ProcessedOrder>` for processed orders
-
-The service abstraction layers are designed for easy database migration:
-- `OrderService` encapsulates all order operations (get, create, update)
-- `ProcessedOrder` model can be persisted to any SQL or NoSQL store
-
-**Production Ready**: Replacing in-memory storage with PostgreSQL or other high-availability databases requires only:
-1. Add Spring Data JPA repositories
-2. Replace `ConcurrentHashMap` operations with repository method calls
-3. Add transaction management for ACID guarantees
-4. No changes to business logic, API contracts, or Kafka integration
-
-The modular design ensures the event-driven architecture remains unchanged while gaining persistent state and horizontal scalability.
-
----
-
-### Kafka Cluster Expansion
-
-The system uses `orderId` as the Kafka message partition key. This design decision ensures:
-- All events for a single order remain in the same partition
-- Strict ordering per order is maintained
-- Consumer state machine validation works correctly
-
-**Production Ready**: This single-broker Kafka setup scales seamlessly to multi-broker clusters:
-- Kafka automatically distributes partitions across brokers
-- Partition key ensures consistent routing and ordering
-- No application code changes required for cluster expansion
-- Consumer rebalancing is handled transparently
-
-The system is already optimized for horizontal scaling across Kafka brokers without architectural changes.
-
----
 
