@@ -70,13 +70,14 @@ services:
       LOGGING_LEVEL_MTA_EDA_PRODUCER: DEBUG
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/cart-service/health/live"]
-      interval: 10s
+      interval: 15s
       timeout: 5s
       retries: 3
       start_period: 20s
+    restart: on-failure:3
     networks:
       - ecommerce-network
-    restart: on-failure:2
+
 
   # Kafka UI for better monitoring and debugging
   kafka-ui:
