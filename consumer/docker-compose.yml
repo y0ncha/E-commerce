@@ -29,6 +29,7 @@ services:
       # When connected to producer_ecommerce-network: resolves to Kafka broker
       # When standalone: DNS won't resolve but app still starts (autoStartup=false)
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SPRING_KAFKA_CONSUMER_GROUP_ID: order-service-group
       KAFKA_TOPIC: orders
       LOGGING_LEVEL_ROOT: INFO

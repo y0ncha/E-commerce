@@ -3,9 +3,6 @@ package mta.eda.consumer.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import mta.eda.consumer.exception.ConsumerDeserializationErrorHandler;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.common.serialization.StringDeserializer;
-import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,9 +10,6 @@ import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
-import org.springframework.kafka.core.DefaultKafkaProducerFactory;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.ContainerProperties;
 
 import java.util.HashMap;
@@ -31,6 +25,18 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.consumer.group-id:order-service-group}")
     private String groupId;
 
+    @Value("${spring.kafka.consumer.key-deserializer}")
+    private String keyDeserializer;
+
+    @Value("${spring.kafka.consumer.value-deserializer}")
+    private String valueDeserializer;
+
+    @Value("${spring.kafka.consumer.auto-offset-reset}")
+    private String autoOffsetReset;
+
+    @Value("${spring.kafka.consumer.enable-auto-commit}")
+    private String enableAutoCommit;
+
     /**
      * ConsumerFactory: Configures the Kafka consumer with proper deserialization and settings.
      * Key Settings:
@@ -43,60 +49,44 @@ public class KafkaConsumerConfig {
     @Bean
     public ConsumerFactory<String, String> consumerFactory() {
         Map<String, Object> props = new HashMap<>();
+
+        // Bootstrap servers
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
-        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
 
-        // MANDATORY: Disable auto-commit for At-Least-Once delivery semantics.
-        // Manual acknowledgment allows precise control over when offsets are committed,
-        // ensuring that offsets advance only after successful business logic processing.
-        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        // Deserializers from application.properties
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, keyDeserializer);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, valueDeserializer);
+
+        // Offsets & Commits
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset);
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, enableAutoCommit);
 
         return new DefaultKafkaConsumerFactory<>(props);
     }
 
     /**
-     * KafkaListenerContainerFactory: Configures the listener container with:
-     * 1. Manual acknowledgment mode (AckMode.MANUAL_IMMEDIATE)
-     * 2. Custom error handler that routes all failures to orders-dlt
-     * 3. Auto-startup enabled for immediate consumption
-     * Error Handling Strategy:
-     * - All errors (deserialization and processing) are routed to orders-dlt
-     * - No automatic retries: malformed data won't become valid on retry
-     * - The ConsumerDeserializationErrorHandler manages all error routing
-     * At-Least-Once Delivery Model:
-     * - Messages are acknowledged ONLY after successful processing
-     * - If processing fails, the offset is NOT committed, allowing redelivery
-     * - After max retries or on fatal errors, message is sent to orders-dlt
-     * Sequencing Guarantees:
-     * - orderId is used as the message key, ensuring messages for the same order
-     *   are routed to the same partition and processed in order
-     * - The idempotency check in KafkaConsumerService detects duplicate deliveries
-     *   using the orderId and skips already-processed messages
+     * Configures the Kafka listener container factory:
+     * - Manual immediate ack mode for precise offset control
+     * - Custom error handler for routing failures to DLT
+     * - Auto-startup enabled
      */
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
             ConsumerFactory<String, String> consumerFactory,
             ConsumerDeserializationErrorHandler deserializationErrorHandler) {
-        ConcurrentKafkaListenerContainerFactory<String, String> factory =
-                new ConcurrentKafkaListenerContainerFactory<>();
+
+        // Container factory
+        ConcurrentKafkaListenerContainerFactory<String, String> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
 
-        // MANDATORY: Set AckMode to MANUAL_IMMEDIATE for precise offset control.
-        // This allows the listener to explicitly call acknowledgment.acknowledge()
-        // after successful processing, committing the offset immediately.
-        // Failure to acknowledge prevents offset advancement, ensuring At-Least-Once semantics.
+        // Ack mode: manual immediate (explicit commit after processing)
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
 
-        // Register custom error handler for deserialization and processing failures
-        // This handler routes ALL errors to orders-dlt without retries
+        // Error handler: route all failures to DLT
         factory.setCommonErrorHandler(deserializationErrorHandler);
 
-        // Enable auto-startup for immediate consumption
-        // Note: This means Spring will attempt to connect immediately on startup.
-        // If Kafka is down, Spring will log errors until it connects.
+        // Auto-startup enabled
         factory.setAutoStartup(true);
 
         return factory;
@@ -109,41 +99,5 @@ public class KafkaConsumerConfig {
     @Bean
     public ObjectMapper objectMapper() {
         return new ObjectMapper();
-    }
-
-    /**
-     * DLQ Producer Factory: Configures a Kafka producer for sending poison pills to DLQ.
-     * Why in consumer config: When a non-transient error (poison pill) is detected,
-     * the consumer needs to send it to the DLQ topic. This requires producer configuration.
-     * Uses String-String serialization to preserve raw message payload.
-     */
-    @Bean
-    public ProducerFactory<String, String> dlqProducerFactory() {
-        Map<String, Object> configProps = new HashMap<>();
-
-        configProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        configProps.put(ProducerConfig.CLIENT_ID_CONFIG, "consumer-dlq-producer");
-        configProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-
-        // Reliability settings
-        configProps.put(ProducerConfig.ACKS_CONFIG, "all");
-        configProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-        configProps.put(ProducerConfig.RETRIES_CONFIG, Integer.MAX_VALUE);
-
-        // Timeouts
-        configProps.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 10000);
-        configProps.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 15000);
-
-        return new DefaultKafkaProducerFactory<>(configProps);
-    }
-
-    /**
-     * DLQ Kafka Template: Template for sending String messages to DLQ.
-     * Injected into DltProducerService for sending poison pills.
-     */
-    @Bean
-    public KafkaTemplate<String, String> dlqKafkaTemplate() {
-        return new KafkaTemplate<>(dlqProducerFactory());
     }
 }
