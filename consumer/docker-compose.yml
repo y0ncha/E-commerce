@@ -42,10 +42,10 @@ services:
       start_period: 20s
     restart: on-failure:2
     networks:
-      - producer_ecommerce-network
+      - ecommerce-network
 
 networks:
-  producer_ecommerce-network:
+  ecommerce-network:
     external: true
     # Connects to the producer's network that contains Kafka
     # Producer must be started first: cd ../producer && docker compose up -d
