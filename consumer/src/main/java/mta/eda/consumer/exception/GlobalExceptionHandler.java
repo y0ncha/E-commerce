@@ -8,6 +8,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
@@ -82,6 +83,21 @@ public class GlobalExceptionHandler {
         details.put("type", "MALFORMED_JSON");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
             errorBody(request, "Bad Request", "Invalid request body. Ensure JSON is properly formatted.", details)
+        );
+    }
+
+    /**
+     * Handle missing required query parameters (e.g., /order-details without orderId).
+     * Returns 400 Bad Request to indicate the client request is malformed.
+     */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<Map<String, Object>> handleMissingRequestParam(MissingServletRequestParameterException ex, HttpServletRequest request) {
+        logger.warn("Missing request parameter: {}", ex.getParameterName());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("type", "MISSING_PARAMETER");
+        details.put("parameter", ex.getParameterName());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            errorBody(request, "Bad Request", "Required query parameter '" + ex.getParameterName() + "' is missing.", details)
         );
     }
 

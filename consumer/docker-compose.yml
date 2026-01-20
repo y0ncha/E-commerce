@@ -41,7 +41,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-    restart: on-failure:2
+    restart: on-failure:3
     networks:
       - ecommerce-network
 
