@@ -98,11 +98,24 @@
                   "",
                   "pm.test('Response should contain error message', () => {",
                   "  const jsonData = pm.response.json();",
-                  "  pm.expect(jsonData).to.have.property('message').or.have.property('error');",
+                  "  pm.expect(jsonData).to.have.property('message');",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "5c87f206-a8f2-47ba-851d-2ccff77abe50",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
