@@ -19,8 +19,7 @@ import java.util.Map;
  * Handles API errors for all controllers using a consistent envelope.
  * Aligned with MTA EDA Exercise 2 requirements.
  * Mirrors the Producer's GlobalExceptionHandler for consistency.
- *
- * Error Types:
+ * * Error Types:
  * - KAFKA_DOWN: Kafka broker is unreachable
  * - TOPIC_NOT_FOUND: Required Kafka topic does not exist
  * - LISTENERS_NOT_RUNNING: Kafka listeners are not operational
@@ -28,6 +27,7 @@ import java.util.Map;
  * - ORDER_NOT_FOUND: Order not found in state store
  * - INVALID_ORDER_ID: Invalid order ID format
  */
+@SuppressWarnings("unused")
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 

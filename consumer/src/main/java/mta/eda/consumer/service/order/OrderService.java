@@ -33,13 +33,11 @@ public class OrderService {
      * 4. Business Logic: Calculate shipping cost based on order items
      * 5. Update Local State: Save order and shipping cost
      * 6. Acknowledge: Called by KafkaConsumerService after successful processing
-     *
      * State Machine Validation:
      * - NEW → CONFIRMED → DISPATCHED → COMPLETED (forward progression)
      * - CANCELED can be reached from any state (terminal)
      * - Backward transitions (e.g., DISPATCHED → NEW) are rejected
      * - All transitions must follow the defined state machine
-     *
      * Idempotency Strategy:
      * - Exact Duplicate: If the incoming order has the same orderId AND same status as current state, skip it
      * - Invalid Transition: If the transition violates state machine rules, skip it
@@ -80,7 +78,7 @@ public class OrderService {
         String action = current == null ? "Created" : "Updated";
         logger.info("✓ {} order {}. Status: {} -> {} | Shipping Cost: ${}",
                 action, orderId,
-                current == null ? "NEW" : current.order().status(),
+                current == null ? "new" : current.order().status(),
                 order.status(),
                 String.format("%.2f", shippingCost));
     }

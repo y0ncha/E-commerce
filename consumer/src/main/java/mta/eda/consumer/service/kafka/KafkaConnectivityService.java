@@ -33,7 +33,6 @@ import java.util.concurrent.atomic.AtomicReference;
  * - Exponential backoff retry with Resilience4j
  * - Health check status reporting
  * - Persistent retry mechanism (never gives up)
- * 
  * Note: Listener lifecycle is now managed by Spring (autoStartup=true) for faster startup.
  * This service focuses purely on monitoring and health reporting.
  */
@@ -61,19 +60,25 @@ public class KafkaConnectivityService {
     private final AtomicBoolean topicNotFound = new AtomicBoolean(false);
     private final AtomicReference<String> lastError = new AtomicReference<>("Initializing...");
 
+    /**
+     * Manages Kafka connectivity and retry logic.
+     * Initializes Kafka connection and configures Resilience4j retry.
+     * @param bootstrapServers Kafka bootstrap servers (default: localhost:9092)
+     * @param topicName Kafka topic name (default: orders)
+     * @param kafkaListenerEndpointRegistry Optional listener registry
+     * @param retryRegistry Optional Resilience4j RetryRegistry
+     */
     public KafkaConnectivityService(
             @Value("${spring.kafka.bootstrap-servers:localhost:9092}") String bootstrapServers,
             @Value("${kafka.consumer.topic:orders}") String topicName,
             Optional<KafkaListenerEndpointRegistry> kafkaListenerEndpointRegistry,
             @Autowired(required = false) RetryRegistry retryRegistry) {
+
+        // Initialize fields
         this.bootstrapServers = bootstrapServers;
         this.topicName = topicName;
         this.kafkaListenerEndpointRegistry = kafkaListenerEndpointRegistry;
-        this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "kafka-connectivity-monitor");
-            t.setDaemon(true);
-            return t;
-        });
+        this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {Thread t = new Thread(r, "kafka-connectivity-monitor"); t.setDaemon(true); return t;});
 
         // Use provided registry or create a default one if missing (e.g. in tests)
         RetryRegistry registry = (retryRegistry != null) ? retryRegistry : RetryRegistry.ofDefaults();
@@ -90,7 +95,7 @@ public class KafkaConnectivityService {
                                 5000    // Max interval: 5 seconds to keep reconnects responsive
                         )
                 )
-                .retryOnException(e -> true)                             // Retry on any exception
+                .retryOnException(e -> !isTopicNotFoundException(e)) // Dont retry on topic-not-found errors
                 .failAfterMaxAttempts(false)                             // Never give up
                 .build();
 

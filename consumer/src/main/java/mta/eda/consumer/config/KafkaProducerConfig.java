@@ -19,18 +19,19 @@ public class KafkaProducerConfig {
 
     @Value("${kafka.dlt.producer.client-id:orders-service}")
     private String dltClientId;
+
     @Value("${kafka.dlt.producer.acks:all}")
     private String dltAcks;
+
     @Value("${kafka.dlt.producer.idempotence:true}")
     private boolean dltIdempotence;
+
     @Value("${kafka.dlt.producer.retries:2147483647}")
     private int dltRetries;
-    @Value("${kafka.dlt.producer.request-timeout-ms:10000}")
-    private int dltRequestTimeoutMs;
-    @Value("${kafka.dlt.producer.delivery-timeout-ms:15000}")
-    private int dltDeliveryTimeoutMs;
+
     @Value("${kafka.dlt.producer.key-serializer:org.apache.kafka.common.serialization.StringSerializer}")
     private String dltKeySerializer;
+
     @Value("${kafka.dlt.producer.value-serializer:org.apache.kafka.common.serialization.StringSerializer}")
     private String dltValueSerializer;
 
@@ -56,10 +57,6 @@ public class KafkaProducerConfig {
         configProps.put(ProducerConfig.ACKS_CONFIG, dltAcks);
         configProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, dltIdempotence);
         configProps.put(ProducerConfig.RETRIES_CONFIG, dltRetries);
-
-        // Timeouts
-        configProps.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, dltRequestTimeoutMs);
-        configProps.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, dltDeliveryTimeoutMs);
 
         return new DefaultKafkaProducerFactory<>(configProps);
     }

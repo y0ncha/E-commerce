@@ -1,4 +1,4 @@
-package mta.eda.consumer.service.kafka;
+package mta.eda.consumer.service.dlt;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.Logger;

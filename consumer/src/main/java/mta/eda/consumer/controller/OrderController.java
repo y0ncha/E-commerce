@@ -40,6 +40,7 @@ public class OrderController {
 
     private static final Logger logger = LoggerFactory.getLogger(OrderController.class);
 
+    // Services
     private final OrderService orderService;
     private final HealthService healthService;
     private final KafkaConnectivityService kafkaConnectivityService;
@@ -175,7 +176,7 @@ public class OrderController {
      */
     @GetMapping("/order-details")
     public ResponseEntity<Map<String, Object>> getOrderDetails(
-            @RequestParam(required = false) String orderId) {
+            @RequestParam String orderId) {
 
         // Create DTO from query parameter for validation
         OrderDetailsRequest request = new OrderDetailsRequest(orderId);
@@ -235,7 +236,7 @@ public class OrderController {
      */
     @GetMapping("/getAllOrdersFromTopic")
     public ResponseEntity<Map<String, Object>> getAllOrdersFromTopic(
-            @RequestParam(required = false) String topicName) {
+            @RequestParam String topicName) {
 
         // Create DTO from query parameter for validation
         AllOrdersFromTopicRequest request = new AllOrdersFromTopicRequest(topicName);
@@ -254,13 +255,7 @@ public class OrderController {
 
         // Query local storage for orders received from this topic
         java.util.List<String> orderIds = orderService.getOrdersByTopic(topicName).stream()
-                .map(id -> {
-                    try {
-                        return normalizeOrderId(id);
-                    } catch (IllegalArgumentException ex) {
-                        return id;
-                    }
-                })
+                .map(id -> {try {return normalizeOrderId(id);} catch (IllegalArgumentException ex) {return id;}})
                 .toList();
 
         logger.info("Found {} orders from topic '{}'", orderIds.size(), topicName);
