@@ -29,22 +29,23 @@ services:
       # When connected to producer_ecommerce-network: resolves to Kafka broker
       # When standalone: DNS won't resolve but app still starts (autoStartup=false)
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SPRING_KAFKA_CONSUMER_GROUP_ID: order-service-group
       KAFKA_TOPIC: orders
       LOGGING_LEVEL_ROOT: INFO
       LOGGING_LEVEL_MTA_EDA_CONSUMER: DEBUG
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8082/order-service/health/live" ]
-      interval: 10s
+      interval: 15s
       timeout: 5s
       retries: 3
       start_period: 20s
-    restart: on-failure:2
+    restart: on-failure:3
     networks:
-      - producer_ecommerce-network
+      - ecommerce-network
 
 networks:
-  producer_ecommerce-network:
+  ecommerce-network:
     external: true
     # Connects to the producer's network that contains Kafka
     # Producer must be started first: cd ../producer && docker compose up -d

@@ -799,7 +799,7 @@ NEW (0) → CONFIRMED (1) → DISPATCHED (2) → COMPLETED (3)
 
 #### ✅ **Valid Transitions**
 
-**Special Case: First Order Creation (No Previous State)**
+**Special Case: First Order Creation (No Previous Status)**
    - When an order is created for the first time (currentStatus = null), it can start in **any valid status**:
    - null → NEW ✅ (typical case)
    - null → CONFIRMED ✅ (producer creates already-confirmed order)
@@ -955,12 +955,12 @@ The Dead Letter Queue is a fallback mechanism for handling **poison pills** - me
 
 ### Configuration Properties
 
-#### `kafka.dlq.topic.name=orders-dlq`
+#### `kafka.dlq.topic.name=orders-dlt`
 - **Purpose**: Name of the Kafka DLQ topic for failed messages
-- **Default**: `orders-dlq`
+- **Default**: `orders-dlt`
 - **Why This Value**: Clearly named topic for messages that cannot be processed
 - **Topic Details**:
-  - **Name**: `orders-dlq`
+  - **Name**: `orders-dlt`
   - **Partitions**: 3 (same as main `orders` topic)
   - **Retention**: 7 days (604,800,000 ms)
   - **Key**: `orderId` (preserved from original message)
@@ -1000,13 +1000,13 @@ The Dead Letter Queue is a fallback mechanism for handling **poison pills** - me
 
 3. **Failed Messages After Max Retries**:
    - After all retry attempts exhausted
-   - Message is sent to `orders-dlq` topic
+   - Message is sent to `orders-dlt` topic
    - Offset is committed (prevents infinite loops)
    - Consumer continues with next message
 
 ### DLQ Message Format
 
-Messages in the `orders-dlq` topic include:
+Messages in the `orders-dlt` topic include:
 - **Key**: Original `orderId` (preserved for traceability)
 - **Value**: Original JSON order payload
 - **Headers**:
@@ -1037,7 +1037,7 @@ Messages in the `orders-dlq` topic include:
 ```bash
 # View DLQ messages
 kafka-console-consumer.sh --bootstrap-server localhost:9092 \
-  --topic orders-dlq \
+  --topic orders-dlt \
   --from-beginning \
   --property print.headers=true \
   --property print.key=true
@@ -1046,13 +1046,13 @@ kafka-console-consumer.sh --bootstrap-server localhost:9092 \
 **Recovery Options**:
 
 1. **Manual Investigation** (Recommended for Exercise 2):
-   - Monitor `orders-dlq` topic
+   - Monitor `orders-dlt` topic
    - Analyze error reasons to identify root cause
    - Fix underlying issue (data quality, schema version, etc.)
    - Manually replay messages after confirming fix
 
 2. **Automated Replay** (Future Enhancement):
-   - Separate consumer reads from `orders-dlq`
+   - Separate consumer reads from `orders-dlt`
    - Applies transformation/fix
    - Republishes to `orders` topic with same `orderId` key
    - Partition routing ensures ordering is preserved
@@ -1066,7 +1066,7 @@ kafka-console-consumer.sh --bootstrap-server localhost:9092 \
 
 ```properties
 # DLQ Settings
-kafka.dlq.topic.name=orders-dlq
+kafka.dlq.topic.name=orders-dlt
 kafka.dlq.enabled=true
 kafka.dlq.max-retries=3
 ```
@@ -1074,7 +1074,7 @@ kafka.dlq.max-retries=3
 ### Error Handler Configuration (in KafkaConsumerConfig.java)
 
 ```java
-// Exponential backoff retry configuration
+// Exponential Backoff retry configuration
 ExponentialBackOff backOff = new ExponentialBackOff(1000, 2.0);  // 1s initial, 2x multiplier
 backOff.setMaxInterval(10000);  // Cap at 10 seconds
 

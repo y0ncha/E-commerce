@@ -98,11 +98,24 @@
                   "",
                   "pm.test('Response should contain error message', () => {",
                   "  const jsonData = pm.response.json();",
-                  "  pm.expect(jsonData).to.have.property('message').or.have.property('error');",
+                  "  pm.expect(jsonData).to.have.property('message');",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "5c87f206-a8f2-47ba-851d-2ccff77abe50",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
@@ -271,11 +284,24 @@
                   "pm.test('Response should contain error message about invalid transition', () => {",
                   "  const jsonData = pm.response.json();",
                   "  const message = jsonData.message || jsonData.error || '';",
-                  "  pm.expect(message.toLowerCase()).to.include('transition').or.include('invalid').or.include('state');",
+                  "  pm.expect(message.toLowerCase()).to.include('invalid status transition')",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "7f78ece5-346e-4893-96f0-73c1fedc1166",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
@@ -321,11 +347,24 @@
                   "pm.test('Response should contain error about invalid state', () => {",
                   "  const jsonData = pm.response.json();",
                   "  const message = jsonData.message || jsonData.error || '';",
-                  "  pm.expect(message.toLowerCase()).to.include('invalid').or.include('state').or.include('unknown');",
+                  "  pm.expect(message.toLowerCase()).to.include('invalid status');",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "4d7dcfc5-3c05-4899-9f16-9163a88ca4a7",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
@@ -384,10 +423,7 @@
                 "id": "skip-state-test",
                 "exec": [
                   "pm.test('Skipping state progression may be rejected (400 or 409) or allowed depending on implementation', () => {",
-                  "  const status = pm.response.code;",
-                  "  // Document whether system allows or rejects skipping states",
-                  "  pm.environment.set('skip_state_allowed', status === 200);",
-                  "  pm.console.log('Skip state transition result: ' + status);",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 409]);",
                   "});"
                 ],
                 "type": "text/javascript",
@@ -443,11 +479,24 @@
                   "pm.test('Response should indicate missing field', () => {",
                   "  const jsonData = pm.response.json();",
                   "  const message = jsonData.message || jsonData.error || '';",
-                  "  pm.expect(message.toLowerCase()).to.include('orderid').or.include('required').or.include('missing');",
+                  "  pm.expect(message.toLowerCase()).to.include('validation error');",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "1f2697ab-2f22-49cd-8212-1a82be3f81a9",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
@@ -492,11 +541,24 @@
                   "pm.test('Response should indicate invalid orderId', () => {",
                   "  const jsonData = pm.response.json();",
                   "  const message = jsonData.message || jsonData.error || '';",
-                  "  pm.expect(message.toLowerCase()).to.include('orderid').or.include('empty').or.include('invalid');",
+                  "  pm.expect(message.toLowerCase()).to.include('validation error');",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "a0270c44-eb00-4c6f-a930-fbbc035b0eeb",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
@@ -585,11 +647,24 @@
                   "pm.test('Response should indicate invalid numItems', () => {",
                   "  const jsonData = pm.response.json();",
                   "  const message = jsonData.message || jsonData.error || '';",
-                  "  pm.expect(message.toLowerCase()).to.include('numitems').or.include('invalid').or.include('positive');",
+                  "  pm.expect(message.toLowerCase()).to.include('validation error');",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "33c459f4-822e-4405-926d-74f3c1927fb5",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
@@ -678,11 +753,24 @@
                   "pm.test('Response should indicate missing status field', () => {",
                   "  const jsonData = pm.response.json();",
                   "  const message = jsonData.message || jsonData.error || '';",
-                  "  pm.expect(message.toLowerCase()).to.include('status').or.include('required').or.include('missing');",
+                  "  pm.expect(message.toLowerCase()).to.include('validation error');",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "a0e9e4b8-5d76-49d8-b546-d00be1794d9b",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
@@ -727,11 +815,24 @@
                   "pm.test('Response should indicate invalid status', () => {",
                   "  const jsonData = pm.response.json();",
                   "  const message = jsonData.message || jsonData.error || '';",
-                  "  pm.expect(message.toLowerCase()).to.include('status').or.include('empty').or.include('invalid');",
+                  "  pm.expect(message.toLowerCase()).to.include('validation error');",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "d2583231-0581-4e3e-a31d-448b9965ce0f",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
@@ -777,17 +878,30 @@
                 "exec": [
                   "pm.test('Query non-existent order should return 404 or empty result', () => {",
                   "  const status = pm.response.code;",
-                  "  pm.expect([404, 200]).to.include(status);",
+                  "  pm.expect([404, 400]).to.include(status);",
                   "});",
                   "",
                   "pm.test('Response should be meaningful', () => {",
-                  "  const jsonData = pm.response.json();",
-                  "  // Either contains error or empty object/null",
-                  "  pm.expect(jsonData).to.exist;",
+                  "    const jsonData = pm.response.json();",
+                  "    const type = jsonData.details.type;",
+                  "    pm.expect(type).to.equal('INVALID_ORDER_ID');",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "b529af17-53ed-4df5-90ef-6cba641f5036",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
@@ -806,7 +920,8 @@
               "query": [
                 {
                   "key": "orderId",
-                  "value": "NONEXISTENT_ORDER_999"
+                  "value": "NONEXISTENT_ORDER_999",
+                  "uuid": "fa40a1da-66e0-4dbd-81c8-93b4732f0e0b"
                 }
               ]
             },
@@ -829,12 +944,24 @@
                   "",
                   "pm.test('Response should contain error message', () => {",
                   "  const jsonData = pm.response.json();",
-                  "  const message = jsonData.message || jsonData.error || '';",
-                  "  pm.expect(message.toLowerCase()).to.include('not found').or.include('does not exist').or.include('invalid');",
+                  "    pm.expect(jsonData.details.type).to.equal('INVALID_ORDER_ID');",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "b2592c18-4e09-41cc-a9ed-47079c7d9d98",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
@@ -1071,12 +1198,24 @@
                   "",
                   "pm.test('Response should indicate invalid orderId', () => {",
                   "  const jsonData = pm.response.json();",
-                  "  const message = jsonData.message || jsonData.error || '';",
-                  "  pm.expect(message.toLowerCase()).to.include('orderid').or.include('null').or.include('invalid');",
+                  "  pm.expect(jsonData.details.type).equals(\"VALIDATION_ERROR\")",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "e8a8f939-6970-45df-bfe8-9b174fd43810",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],
@@ -1120,12 +1259,24 @@
                   "",
                   "pm.test('Response should indicate invalid status', () => {",
                   "  const jsonData = pm.response.json();",
-                  "  const message = jsonData.message || jsonData.error || '';",
-                  "  pm.expect(message.toLowerCase()).to.include('status').or.include('null').or.include('invalid');",
+                  "    pm.expect(jsonData.details.type).equals(\"VALIDATION_ERROR\");",
                   "});"
                 ],
                 "type": "text/javascript",
-                "packages": {}
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "d0404435-8af1-474e-b89a-1608ad8a067e",
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
               }
             }
           ],

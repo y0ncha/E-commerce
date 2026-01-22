@@ -4,7 +4,6 @@ import lombok.Getter;
 
 /**
  * InvalidStatusTransitionException
- *
  * Thrown when a status transition violates the state machine rules.
  * Example: Trying to transition from DISPATCHED to CONFIRMED (backward)
  */
@@ -18,7 +17,7 @@ public class InvalidStatusTransitionException extends RuntimeException {
     public InvalidStatusTransitionException(String orderId, String currentStatus, String requestedStatus) {
         super(String.format(
             "Invalid status transition for order %s: %s → %s. " +
-            "Status must progress sequentially (NEW → CONFIRMED → DISPATCHED → COMPLETED) or to CANCELED from any state.",
+            "Status must progress sequentially ('new' → 'confirmed' → 'dispatched' → 'completed') or to 'canceled' from any state.",
             orderId, currentStatus, requestedStatus
         ));
         this.orderId = orderId;

@@ -40,14 +40,14 @@ public class KafkaTopicConfig {
      */
     @Bean
     public NewTopic ordersDltTopic(
+            @Value("${kafka.topic.name}") String topicName,
             @Value("${kafka.topic.partitions:3}") int partitions,
             @Value("${kafka.topic.replication-factor:1}") short replicationFactor
     ) {
-        return TopicBuilder.name("orders-dlt")
+        return TopicBuilder.name(topicName + "-dlt")
                 .partitions(partitions)
                 .replicas(replicationFactor)
                 .config(TopicConfig.RETENTION_MS_CONFIG, "604800000")
                 .build();
     }
 }
-

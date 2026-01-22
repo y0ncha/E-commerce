@@ -33,20 +33,18 @@ public class OrderService {
      * 4. Business Logic: Calculate shipping cost based on order items
      * 5. Update Local State: Save order and shipping cost
      * 6. Acknowledge: Called by KafkaConsumerService after successful processing
-     *
      * State Machine Validation:
      * - NEW → CONFIRMED → DISPATCHED → COMPLETED (forward progression)
      * - CANCELED can be reached from any state (terminal)
      * - Backward transitions (e.g., DISPATCHED → NEW) are rejected
      * - All transitions must follow the defined state machine
-     *
      * Idempotency Strategy:
      * - Exact Duplicate: If the incoming order has the same orderId AND same status as current state, skip it
      * - Invalid Transition: If the transition violates state machine rules, skip it
      * - Valid Transition: If the incoming status transition is allowed, process it
      */
     public void processOrder(Order order) {
-        String orderId = order.orderId();
+        String orderId = normalizeOrderId(order.orderId());
         ProcessedOrder current = processedOrderStore.get(orderId);
 
         // Step 1: Idempotency check - if we already have this exact order state, skip
@@ -68,19 +66,16 @@ public class OrderService {
 
         // Step 3: Calculate shipping cost based on order items
         double shippingCost = calculateShippingCost(order);
-
-        // Step 4: Update the local state with ProcessedOrder wrapper
         Instant receivedAt = Instant.now();
         ProcessedOrder processedOrder = new ProcessedOrder(order, shippingCost, receivedAt);
         processedOrderStore.put(orderId, processedOrder);
 
         // Track ALL messages received (including all status updates)
         allMessages.add(processedOrder);
-
         String action = current == null ? "Created" : "Updated";
         logger.info("✓ {} order {}. Status: {} -> {} | Shipping Cost: ${}",
                 action, orderId,
-                current == null ? "NEW" : current.order().status(),
+                current == null ? "new" : current.order().status(),
                 order.status(),
                 String.format("%.2f", shippingCost));
     }
@@ -94,8 +89,8 @@ public class OrderService {
      * @return Optional containing the order if found
      */
     public Optional<Order> getOrder(String rawOrderId) {
-        String normalizedOrderId = normalizeOrderId(rawOrderId);
-        return Optional.ofNullable(processedOrderStore.get(normalizedOrderId))
+        String orderId = normalizeOrderId(rawOrderId);
+        return Optional.ofNullable(processedOrderStore.get(orderId))
                 .map(ProcessedOrder::order);
     }
 
@@ -107,8 +102,8 @@ public class OrderService {
      * @return Optional containing the processed order if found
      */
     public Optional<ProcessedOrder> getProcessedOrder(String rawOrderId) {
-        String normalizedOrderId = normalizeOrderId(rawOrderId);
-        return Optional.ofNullable(processedOrderStore.get(normalizedOrderId));
+        String orderId = normalizeOrderId(rawOrderId);
+        return Optional.ofNullable(processedOrderStore.get(orderId));
     }
 
     /**

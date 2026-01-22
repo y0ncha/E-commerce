@@ -69,7 +69,8 @@ public class HealthService {
 
         if (kafkaConnectivityService.isKafkaConnected() && kafkaConnectivityService.areListenersRunning()) {
             return new HealthCheck("UP", detailedStatus);
-        } else {
+        }
+        else {
             return new HealthCheck("DEGRADED", detailedStatus);
         }
     }

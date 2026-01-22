@@ -1,6 +1,6 @@
 package mta.eda.consumer.exception;
 
-import mta.eda.consumer.service.kafka.DltProducerService;
+import mta.eda.consumer.service.dlt.DltProducerService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

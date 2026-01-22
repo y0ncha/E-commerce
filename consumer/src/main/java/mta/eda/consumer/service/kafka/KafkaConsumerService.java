@@ -79,10 +79,7 @@ public class KafkaConsumerService {
             groupId = "${spring.kafka.consumer.group-id:order-service-group}",
             containerFactory = "kafkaListenerContainerFactory"
     )
-    public void consumeOrder(
-            ConsumerRecord<String, String> record,
-            Acknowledgment acknowledgment) {
-
+    public void consumeOrder(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
         String orderId = record.key();
         String payload = record.value();
         long offset = record.offset();
@@ -92,11 +89,11 @@ public class KafkaConsumerService {
                 orderId, topicName, record.partition(), offset);
 
         try {
-            // STEP 1: Deserialize JSON to Order object
+            // step 1: Deserialize JSON to Order object
             // If deserialization fails, throw exception to trigger retry/DLT
             Order order = deserializeOrder(payload, topicName);
 
-            // STEP 2: Idempotency check using orderId
+            // step 2: Idempotency check using orderId
             // Detect if we've already processed this message (duplicate delivery from retry)
             if (isMessageAlreadyProcessed(orderId, offset)) {
                 logger.info("Idempotency check: Order {} at offset {} already processed. Skipping.", orderId, offset);
@@ -105,7 +102,7 @@ public class KafkaConsumerService {
                 return;
             }
 
-            // STEP 3: Business logic - process the order
+            // step 3: Business logic - process the order
             // OrderService.processOrder() handles:
             // - Status transition validation (sequencing check)
             // - Duplicate detection (exact same status = duplicate)
@@ -113,10 +110,10 @@ public class KafkaConsumerService {
             // - State update with concurrent hashmap
             orderService.processOrder(order);
 
-            // STEP 4: Mark message as processed for idempotency
+            // step 4: Mark message as processed for idempotency
             recordProcessedMessage(orderId, offset);
 
-            // STEP 5: Manual acknowledgment - only after successful processing
+            // step 5: Manual acknowledgment - only after successful processing
             // This commits the offset immediately (ack-mode=manual_immediate)
             // Offset advancement ensures this message won't be redelivered
             acknowledgment.acknowledge();
@@ -215,8 +212,7 @@ public class KafkaConsumerService {
     /**
      * Inner class to track processed message metadata for idempotency detection.
      */
-    private record ProcessedMessageInfo(long offset, long processedAt) {
-    }
+    private record ProcessedMessageInfo(long offset, long processedAt) {}
 
     /**
      * Get the idempotency map size (for monitoring/debugging).

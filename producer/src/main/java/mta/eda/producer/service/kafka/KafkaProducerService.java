@@ -5,16 +5,12 @@ import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import mta.eda.producer.exception.ServiceUnavailableException;
 import mta.eda.producer.exception.TopicNotFoundException;
 import mta.eda.producer.model.order.Order;
-import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
-
-import java.nio.charset.StandardCharsets;
-import java.util.concurrent.TimeUnit;
 
 /**
  * KafkaProducerService
@@ -28,20 +24,14 @@ public class KafkaProducerService {
     private static final Logger failedOrdersLogger = LoggerFactory.getLogger("FAILED_ORDERS_LOGGER");
 
     private final KafkaTemplate<String, Order> kafkaTemplate;
-    private final KafkaTemplate<String, String> dlqKafkaTemplate;
     private final KafkaConnectivityService connectivityService;
 
     @Value("${kafka.topic.name}")
     private String topicName;
 
-    @Value("${producer.send.timeout.ms:10000}")
-    private long sendTimeoutMs;
-
     public KafkaProducerService(KafkaTemplate<String, Order> kafkaTemplate,
-                                KafkaTemplate<String, String> dlqKafkaTemplate,
                                 KafkaConnectivityService connectivityService) {
         this.kafkaTemplate = kafkaTemplate;
-        this.dlqKafkaTemplate = dlqKafkaTemplate;
         this.connectivityService = connectivityService;
     }
 
@@ -54,11 +44,15 @@ public class KafkaProducerService {
         try {
             // Synchronous block: Kafka retries internally until delivery.timeout.ms is reached
             SendResult<String, Order> result = kafkaTemplate.send(topicName, orderId, order)
-                    .get(sendTimeoutMs, TimeUnit.MILLISECONDS);
+                .get(2000, java.util.concurrent.TimeUnit.MILLISECONDS); // Fail-fast: 2s timeout
 
             logger.info("Successfully sent orderId={} (partition={} offset={})",
                     orderId, result.getRecordMetadata().partition(), result.getRecordMetadata().offset());
 
+        } catch (java.util.concurrent.TimeoutException te) {
+            logFailedOrder("KAFKA_TIMEOUT", orderId, order, "Kafka send timed out");
+            throw new ServiceUnavailableException("KAFKA_TIMEOUT", orderId,
+                    "Kafka send timed out", te);
         } catch (Exception e) {
             // Check if the cause chain contains UnknownTopicOrPartitionException
 
@@ -90,23 +84,27 @@ public class KafkaProducerService {
         String type;
         String message;
 
-        if (t instanceof CallNotPermittedException) {
-            type = "CIRCUIT_BREAKER_OPEN";
-            message = "Service is temporarily unavailable due to high failure rate (Circuit Breaker Open)";
-        } else if (t instanceof TopicNotFoundException tne) {
-            // Re-throw TopicNotFoundException as-is (don't wrap it)
-            throw tne;
-        } else if (t instanceof ServiceUnavailableException sue) {
-            // Preserve the specific type (e.g., KAFKA_DOWN) thrown in the try block
-            type = sue.getType();
-            message = sue.getMessage();
-        } else {
-            type = "KAFKA_ERROR";
-            message = "An unexpected error occurred while communicating with the message broker";
+        switch (t) {
+            case CallNotPermittedException callNotPermittedException -> {
+                type = "CIRCUIT_BREAKER_OPEN";
+                message = "Service is temporarily unavailable due to high failure rate (Circuit Breaker Open)";
+            }
+            case TopicNotFoundException tne ->
+                // Re-throw TopicNotFoundException as-is (don't wrap it)
+                    throw tne;
+            case ServiceUnavailableException sue -> {
+                // Preserve the specific type (e.g., KAFKA_DOWN) thrown in the try block
+                type = sue.getType();
+                message = sue.getMessage();
+            }
+            case null, default -> {
+                type = "KAFKA_ERROR";
+                message = "An unexpected error occurred while communicating with the message broker";
+            }
         }
 
-        logger.error("Fallback triggered for orderId={} | Type: {} | Reason: {}", orderId, type, t.getMessage());
-        logFailedOrder("FALLBACK_" + type, orderId, order, t.getMessage());
+        logger.error("Fallback triggered for orderId={} | Type: {} | Reason: {}", orderId, type, t != null ? t.getMessage() : null);
+        logFailedOrder("FALLBACK_" + type, orderId, order, t != null ? t.getMessage() : null);
         
         throw new ServiceUnavailableException(type, orderId, message, t);
     }
@@ -114,45 +112,5 @@ public class KafkaProducerService {
     private void logFailedOrder(String type, String orderId, Order order, String reason) {
         failedOrdersLogger.info("FAILED_ORDER | Type: {} | OrderId: {} | Reason: {} | Payload: {}", 
                 type, orderId, reason, order);
-    }
-
-    /**
-     * Sends a message to the Dead Letter Queue (DLQ) for poison pills.
-     * This method is used when a message cannot be processed after all retries.
-     *
-     * Design Requirements (MTA EDA Course):
-     * 1. Preserve orderId as message key for sequencing and traceability
-     * 2. Add metadata headers (original topic, error reason, timestamp)
-     * 3. Use async callback to log DLQ producer success/failure
-     * 4. Log CRITICAL errors if DLQ send itself fails (requires alerting)
-     *
-     * @param originalTopic the topic where the message originally came from
-     * @param key the message key (orderId) - MUST be preserved
-     * @param value the original message payload
-     * @param errorReason description of why the message failed
-     */
-    public void sendToDlq(String originalTopic, String key, String value, String errorReason) {
-        String dlqTopic = originalTopic + "-dlq";
-
-        ProducerRecord<String, String> record = new ProducerRecord<>(dlqTopic, key, value);
-
-        // Add metadata headers for debugging and traceability
-        record.headers()
-            .add("original-topic", originalTopic.getBytes(StandardCharsets.UTF_8))
-            .add("error-reason", errorReason.getBytes(StandardCharsets.UTF_8))
-            .add("failed-at", String.valueOf(System.currentTimeMillis()).getBytes(StandardCharsets.UTF_8));
-
-        // Async send with callback (course requirement for resiliency)
-        dlqKafkaTemplate.send(record).whenComplete((result, ex) -> {
-            if (ex != null) {
-                logger.error("CRITICAL: Failed to send message to DLQ. Topic={}, Key={}, Error={}",
-                           dlqTopic, key, ex.getMessage());
-                // In production: trigger alert/monitoring system here
-            } else {
-                logger.warn("✓ Message sent to DLQ. Topic={}, Key={}, Partition={}, Offset={}, Reason={}",
-                          dlqTopic, key, result.getRecordMetadata().partition(),
-                          result.getRecordMetadata().offset(), errorReason);
-            }
-        });
     }
 }

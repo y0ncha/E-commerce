@@ -33,7 +33,6 @@ import java.util.concurrent.atomic.AtomicReference;
  * - Exponential backoff retry with Resilience4j
  * - Health check status reporting
  * - Persistent retry mechanism (never gives up)
- * 
  * Note: Listener lifecycle is now managed by Spring (autoStartup=true) for faster startup.
  * This service focuses purely on monitoring and health reporting.
  */
@@ -61,19 +60,28 @@ public class KafkaConnectivityService {
     private final AtomicBoolean topicNotFound = new AtomicBoolean(false);
     private final AtomicReference<String> lastError = new AtomicReference<>("Initializing...");
 
+    // Reused AdminClient to avoid creating/closing on every probe
+    private volatile AdminClient adminClient = null;
+
+    /**
+     * Manages Kafka connectivity and retry logic.
+     * Initializes Kafka connection and configures Resilience4j retry.
+     * @param bootstrapServers Kafka bootstrap servers (default: localhost:9092)
+     * @param topicName Kafka topic name (default: orders)
+     * @param kafkaListenerEndpointRegistry Optional listener registry
+     * @param retryRegistry Optional Resilience4j RetryRegistry
+     */
     public KafkaConnectivityService(
             @Value("${spring.kafka.bootstrap-servers:localhost:9092}") String bootstrapServers,
             @Value("${kafka.consumer.topic:orders}") String topicName,
             Optional<KafkaListenerEndpointRegistry> kafkaListenerEndpointRegistry,
             @Autowired(required = false) RetryRegistry retryRegistry) {
+
+        // Initialize fields
         this.bootstrapServers = bootstrapServers;
         this.topicName = topicName;
         this.kafkaListenerEndpointRegistry = kafkaListenerEndpointRegistry;
-        this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "kafka-connectivity-monitor");
-            t.setDaemon(true);
-            return t;
-        });
+        this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {Thread t = new Thread(r, "kafka-connectivity-monitor"); t.setDaemon(true); return t;});
 
         // Use provided registry or create a default one if missing (e.g. in tests)
         RetryRegistry registry = (retryRegistry != null) ? retryRegistry : RetryRegistry.ofDefaults();
@@ -87,10 +95,10 @@ public class KafkaConnectivityService {
                         io.github.resilience4j.core.IntervalFunction.ofExponentialBackoff(
                                 100,    // Initial interval: 100ms for aggressive first retries
                                 2.0,    // Multiplier: 2x exponential
-                                5000    // Max interval: 5 seconds to keep reconnects responsive
+                                2000    // Max interval: 2 seconds to keep reconnects responsive
                         )
                 )
-                .retryOnException(e -> true)                             // Retry on any exception
+                .retryOnException(e -> !isTopicNotFoundException(e)) // Dont retry on topic-not-found errors
                 .failAfterMaxAttempts(false)                             // Never give up
                 .build();
 
@@ -122,6 +130,8 @@ public class KafkaConnectivityService {
     public void stopMonitoring() {
         logger.info("Stopping Kafka connectivity monitoring service");
         monitoringActive.set(false);
+        // Close shared AdminClient cleanly
+        closeAdminClient();
         scheduler.shutdown();
         try {
             if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -232,28 +242,16 @@ public class KafkaConnectivityService {
      * Test Kafka connection (3-second timeout)
      */
     private boolean testKafkaConnection() {
-        AdminClient admin = null;
         try {
-            Map<String, Object> adminProps = new HashMap<>();
-            adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-            adminProps.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 3000);
-            adminProps.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 3000);
-            adminProps.put(AdminClientConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG, 1000);
-
-            admin = AdminClient.create(adminProps);
-            admin.describeCluster().nodes().get(3, java.util.concurrent.TimeUnit.SECONDS);
+            AdminClient admin = getAdminClient();
+            admin.describeCluster().nodes().get(1500, java.util.concurrent.TimeUnit.MILLISECONDS);
             return true;
 
         } catch (Exception e) {
             logger.warn("Kafka connectivity test failed for {}: {}", bootstrapServers, e.getMessage());
+            // Reset the AdminClient so we'll recreate it next time (avoid repeated re-init logs)
+            closeAdminClient();
             return false;
-
-        } finally {
-            if (admin != null) {
-                try {
-                    admin.close();
-                } catch (Exception ignored) {}
-            }
         }
     }
 
@@ -261,18 +259,12 @@ public class KafkaConnectivityService {
      * Verify that the topic exists and has ready partitions
      */
     private boolean verifyTopicExists() {
-        AdminClient admin = null;
         try {
-            Map<String, Object> adminProps = new HashMap<>();
-            adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-            adminProps.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 3000);
-            adminProps.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 3000);
-
-            admin = AdminClient.create(adminProps);
+            AdminClient admin = getAdminClient();
             var topicDesc = admin.describeTopics(List.of(topicName))
                     .topicNameValues()
                     .get(topicName)
-                    .get(3, TimeUnit.SECONDS);
+                    .get(1500, TimeUnit.MILLISECONDS);
 
             // Verify all partitions have a leader
             boolean ready = topicDesc.partitions().stream()
@@ -287,6 +279,7 @@ public class KafkaConnectivityService {
         } catch (java.util.concurrent.TimeoutException te) {
             logger.debug("Topic verification timed out for '{}': {}", topicName, te.getMessage());
             lastError.set("Topic verification timeout");
+            // On timeout we keep the adminClient alive for retries
             return false;
         } catch (Exception e) {
             // Check if this is a topic-not-found error
@@ -298,15 +291,11 @@ public class KafkaConnectivityService {
                 topicNotFound.set(false);
                 lastError.set("Topic verification failed: " + e.getMessage());
                 logger.debug("Topic verification failed for '{}': {}", topicName, e.getMessage());
+                // For non-topic-not-found errors, recreate the AdminClient next time
+                closeAdminClient();
             }
             return false;
 
-        } finally {
-            if (admin != null) {
-                try {
-                    admin.close();
-                } catch (Exception ignored) {}
-            }
         }
     }
 
@@ -450,4 +439,39 @@ public class KafkaConnectivityService {
         }
     }
 
+    /**
+     * Get a shared AdminClient instance (create if necessary)
+     */
+    private synchronized AdminClient getAdminClient() {
+        if (adminClient == null) {
+            try {
+                Map<String, Object> adminProps = new HashMap<>();
+                adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+                adminProps.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 1500);
+                adminProps.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 1500);
+                adminProps.put(AdminClientConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG, 1000);
+
+                adminClient = AdminClient.create(adminProps);
+            } catch (Exception e) {
+                logger.error("Failed to create AdminClient: {}", e.getMessage());
+                throw e;
+            }
+        }
+        return adminClient;
+    }
+
+    /**
+     * Close the shared AdminClient if it is open
+     */
+    private synchronized void closeAdminClient() {
+        if (adminClient != null) {
+            try {
+                adminClient.close();
+            } catch (Exception e) {
+                logger.warn("Error closing AdminClient: {}", e.getMessage());
+            } finally {
+                adminClient = null;
+            }
+        }
+    }
 }
