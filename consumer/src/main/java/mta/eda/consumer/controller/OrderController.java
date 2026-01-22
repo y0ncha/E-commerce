@@ -177,6 +177,17 @@ public class OrderController {
     @GetMapping("/order-details")
     public ResponseEntity<Map<String, Object>> getOrderDetails(
             @RequestParam String orderId) {
+        // Fail-fast if Kafka is down or topic not ready
+        if (!kafkaConnectivityService.isKafkaConnected() ||
+            !kafkaConnectivityService.isTopicReady() ||
+            kafkaConnectivityService.isTopicNotFound()) {
+            String errorMsg = kafkaConnectivityService.getDetailedStatus();
+            logger.error("Kafka unavailable for order-details: {}", errorMsg);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("error", "KAFKA_UNAVAILABLE");
+            body.put("details", errorMsg);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
+        }
 
         // Create DTO from query parameter for validation
         OrderDetailsRequest request = new OrderDetailsRequest(orderId);
@@ -237,6 +248,17 @@ public class OrderController {
     @GetMapping("/getAllOrdersFromTopic")
     public ResponseEntity<Map<String, Object>> getAllOrdersFromTopic(
             @RequestParam String topicName) {
+        // Fail-fast if Kafka is down or topic not ready
+        if (!kafkaConnectivityService.isKafkaConnected() ||
+            !kafkaConnectivityService.isTopicReady() ||
+            kafkaConnectivityService.isTopicNotFound()) {
+            String errorMsg = kafkaConnectivityService.getDetailedStatus();
+            logger.error("Kafka unavailable for getAllOrdersFromTopic: {}", errorMsg);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("error", "KAFKA_UNAVAILABLE");
+            body.put("details", errorMsg);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
+        }
 
         // Create DTO from query parameter for validation
         AllOrdersFromTopicRequest request = new AllOrdersFromTopicRequest(topicName);

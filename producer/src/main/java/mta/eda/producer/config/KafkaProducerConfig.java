@@ -42,6 +42,15 @@ public class KafkaProducerConfig {
     @Value("${spring.general.producer.client-id}")
     private String clientId;
 
+    @Value("${spring.kafka.producer.properties.request.timeout.ms:1500}")
+    private int requestTimeoutMs;
+
+    @Value("${spring.kafka.producer.properties.delivery.timeout.ms:2000}")
+    private int deliveryTimeoutMs;
+
+    @Value("${spring.kafka.producer.properties.max.block.ms:1500}")
+    private int maxBlockMs;
+
     /**
      * Creates the ProducerFactory that configures how Kafka producers are created.
      * Key is String (orderId), Value is Order (JSON).
@@ -62,6 +71,11 @@ public class KafkaProducerConfig {
         // Reliability settings
         configProps.put(ProducerConfig.ACKS_CONFIG, acks);
         configProps.put(ProducerConfig.RETRIES_CONFIG, retries);
+
+        // Timeout settings
+        configProps.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, requestTimeoutMs);
+        configProps.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, deliveryTimeoutMs);
+        configProps.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, maxBlockMs);
 
         // Idempotence
         configProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, enableIdempotence);

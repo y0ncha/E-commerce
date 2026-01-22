@@ -43,11 +43,16 @@ public class KafkaProducerService {
     public void sendOrder(String orderId, Order order) {
         try {
             // Synchronous block: Kafka retries internally until delivery.timeout.ms is reached
-            SendResult<String, Order> result = kafkaTemplate.send(topicName, orderId, order).get();
+            SendResult<String, Order> result = kafkaTemplate.send(topicName, orderId, order)
+                .get(2000, java.util.concurrent.TimeUnit.MILLISECONDS); // Fail-fast: 2s timeout
 
             logger.info("Successfully sent orderId={} (partition={} offset={})",
                     orderId, result.getRecordMetadata().partition(), result.getRecordMetadata().offset());
 
+        } catch (java.util.concurrent.TimeoutException te) {
+            logFailedOrder("KAFKA_TIMEOUT", orderId, order, "Kafka send timed out");
+            throw new ServiceUnavailableException("KAFKA_TIMEOUT", orderId,
+                    "Kafka send timed out", te);
         } catch (Exception e) {
             // Check if the cause chain contains UnknownTopicOrPartitionException
 

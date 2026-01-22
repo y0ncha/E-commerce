@@ -32,6 +32,24 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.consumer.enable-auto-commit}")
     private String enableAutoCommit;
 
+    @Value("${spring.kafka.consumer.key-deserializer}")
+    private String keyDeserializer;
+
+    @Value("${spring.kafka.consumer.value-deserializer}")
+    private String valueDeserializer;
+
+    @Value("${spring.kafka.consumer.properties.spring.deserializer.value.delegate.class}")
+    private String valueDelegateDeserializer;
+
+    @Value("${spring.kafka.consumer.properties.spring.json.trusted.packages}")
+    private String trustedPackages;
+
+    @Value("${spring.kafka.consumer.properties.spring.json.value.default.type}")
+    private String valueDefaultType;
+
+    @Value("${spring.kafka.consumer.properties.spring.json.type.mapping}")
+    private String typeMapping;
+
     /**
      * ConsumerFactory: Configures the Kafka consumer with proper deserialization and settings.
      * Key Settings:
@@ -42,7 +60,7 @@ public class KafkaConsumerConfig {
      *   This ensures the consumer doesn't miss messages during startup or after crashes.
      */
     @Bean
-    public ConsumerFactory<String, String> consumerFactory() {
+    public ConsumerFactory<String, Object> consumerFactory() {
         Map<String, Object> props = new HashMap<>();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
@@ -50,6 +68,11 @@ public class KafkaConsumerConfig {
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset);
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, enableAutoCommit);
+        // Fail-fast timeouts and retries
+        props.put("request.timeout.ms", 1500);
+        props.put("session.timeout.ms", 1500);
+        props.put("max.poll.interval.ms", 2000);
+        props.put("retries", 1);
         return new DefaultKafkaConsumerFactory<>(props);
     }
 
@@ -69,14 +92,5 @@ public class KafkaConsumerConfig {
         factory.setCommonErrorHandler(deserializationErrorHandler);
         factory.setAutoStartup(true);
         return factory;
-    }
-
-    /**
-     * ObjectMapper Bean: Provides JSON serialization/deserialization capability.
-     * This bean is required by KafkaConsumerService for converting JSON messages to Order objects.
-     */
-    @Bean
-    public ObjectMapper objectMapper() {
-        return new ObjectMapper();
     }
 }

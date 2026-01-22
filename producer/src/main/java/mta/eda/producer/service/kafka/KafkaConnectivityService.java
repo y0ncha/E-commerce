@@ -82,7 +82,7 @@ public class KafkaConnectivityService {
                         io.github.resilience4j.core.IntervalFunction.ofExponentialBackoff(
                                 100,    // Initial interval: 100ms for aggressive first retries
                                 2.0,    // Multiplier: 2x exponential
-                                5000    // Max interval: 5 seconds to keep reconnects responsive
+                                2000    // Max interval: 2 seconds to keep reconnects responsive
                         )
                 )
                 .retryOnException(e -> true)                             // Retry on any exception
@@ -222,7 +222,7 @@ public class KafkaConnectivityService {
     private boolean testKafkaConnection() {
         try {
             AdminClient admin = getAdminClient();
-            admin.describeCluster().nodes().get(3, java.util.concurrent.TimeUnit.SECONDS);
+            admin.describeCluster().nodes().get(1500, java.util.concurrent.TimeUnit.MILLISECONDS);
             return true;
 
         } catch (Exception e) {
@@ -243,7 +243,7 @@ public class KafkaConnectivityService {
             var topicDesc = admin.describeTopics(List.of(topicName))
                     .topicNameValues()
                     .get(topicName)
-                    .get(3, TimeUnit.SECONDS);
+                    .get(1500, TimeUnit.MILLISECONDS);
 
             // Verify all partitions have a leader
             boolean ready = topicDesc.partitions().stream()
@@ -437,8 +437,8 @@ public class KafkaConnectivityService {
             try {
                 Map<String, Object> adminProps = new HashMap<>();
                 adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-                adminProps.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 3000);
-                adminProps.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 3000);
+                adminProps.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 1500);
+                adminProps.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 1500);
                 adminProps.put(AdminClientConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG, 1000);
 
                 adminClient = AdminClient.create(adminProps);
